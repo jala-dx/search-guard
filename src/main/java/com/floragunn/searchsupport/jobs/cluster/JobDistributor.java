@@ -15,26 +15,25 @@ import org.elasticsearch.cluster.service.ClusterService;
 
 import com.floragunn.searchsupport.jobs.config.JobConfig;
 
-public class JobDistributor {
+public class JobDistributor implements AutoCloseable {
     protected final Logger log = LogManager.getLogger(this.getClass());
 
     private final String name;
     private final String nodeFilter;
-    private int availableNodes;
-    private int currentNodeIndex;
+    private final String[] nodeFilterElements;
+    private final ClusterService clusterService;
+    private DistributedJobStore distributedJobStore;
+    private int availableNodes = 0;
+    private int currentNodeIndex = -1;
 
-    public JobDistributor(String name, String nodeFilter) {
+    public JobDistributor(String name, String nodeFilter, ClusterService clusterService, DistributedJobStore distributedJobStore) {
         this.name = name;
         this.nodeFilter = nodeFilter;
-    }
+        this.nodeFilterElements = nodeFilter != null ? nodeFilter.split(",") : null;
+        this.clusterService = clusterService;
+        this.distributedJobStore = distributedJobStore;
 
-    public void init(ClusterService clusterService) {
-        clusterService.addListener(clusterStateListener);
-    }
-
-    @Override
-    public String toString() {
-        return "JobExecutionEngine " + name;
+        init();
     }
 
     public boolean isJobSelected(JobConfig jobConfig) {
@@ -51,34 +50,60 @@ public class JobDistributor {
         }
     }
 
+    @Override
+    public String toString() {
+        return "JobDistributor " + name;
+    }
+
+    @Override
+    public void close() throws Exception {
+        this.clusterService.removeListener(clusterStateListener);
+    }
+
+    private void init() {
+        clusterService.addListener(clusterStateListener);
+        update(clusterService.state());
+    }
+
     private boolean update(ClusterState clusterState) {
-        String[] availableNodeIds = getAvailableNodeIds(clusterState, nodeFilter);
+        int oldAvailableNodes = this.availableNodes;
+        int oldCurrentNodeIndex = this.currentNodeIndex;
+        String[] availableNodeIds = getAvailableNodeIds(clusterState);
 
         if (log.isDebugEnabled()) {
-            log.debug("Update of " + this + ": " + Arrays.asList(availableNodeIds));
+            log.debug("Update of " + this + " on " + clusterState.nodes().getLocalNodeId() + ": " + Arrays.asList(availableNodeIds));
         }
 
         this.availableNodes = availableNodeIds.length;
 
         if (this.availableNodes == 0) {
             log.error("No nodes available for " + this + "\nnodeFilter: " + nodeFilter);
-            return false;
+            this.currentNodeIndex = -1;
+        } else {
+            this.currentNodeIndex = Arrays.binarySearch(availableNodeIds, clusterState.nodes().getLocalNodeId());
         }
 
-        this.currentNodeIndex = Arrays.binarySearch(availableNodeIds, clusterState.nodes().getLocalNodeId());
+        if (oldAvailableNodes == this.availableNodes && oldCurrentNodeIndex == this.currentNodeIndex) {
+            log.debug("Cluster state change does not require rescheduling of jobs");
+            return false;
+        }
 
         if (currentNodeIndex == -1) {
             if (log.isDebugEnabled()) {
                 log.debug("The current node is not configured to execute jobs for " + this + "\nnodeFilter: " + nodeFilter);
             }
-            return false;
+            return true;
+        }
+
+        if (log.isDebugEnabled()) {
+            log.debug("Node index of " + clusterState.nodes().getLocalNodeId() + " after update: " + currentNodeIndex);
         }
 
         return true;
     }
 
-    private String[] getAvailableNodeIds(ClusterState clusterState, String nodeFilter) {
-        String[] nodeIds = clusterState.nodes().resolveNodes(this.nodeFilter.split(","));
+    private String[] getAvailableNodeIds(ClusterState clusterState) {
+        String[] nodeIds = clusterState.nodes().resolveNodes(this.nodeFilterElements);
 
         Arrays.sort(nodeIds);
 
@@ -89,8 +114,19 @@ public class JobDistributor {
 
         @Override
         public void clusterChanged(ClusterChangedEvent event) {
-            update(event.state());
+            if (update(event.state()) && distributedJobStore != null) {
+                distributedJobStore.clusterConfigChanged();
+            }
         }
 
     };
+
+    public DistributedJobStore getDistributedJobStore() {
+        return distributedJobStore;
+    }
+
+    public void setDistributedJobStore(DistributedJobStore distributedJobStore) {
+        this.distributedJobStore = distributedJobStore;
+    }
+
 }

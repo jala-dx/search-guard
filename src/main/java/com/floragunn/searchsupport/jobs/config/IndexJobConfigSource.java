@@ -11,23 +11,33 @@ import org.elasticsearch.client.Client;
 import org.elasticsearch.search.SearchHit;
 import org.elasticsearch.search.SearchHits;
 
+import com.floragunn.searchsupport.jobs.cluster.JobDistributor;
+import com.google.common.collect.Iterators;
+
 public class IndexJobConfigSource<JobType extends JobConfig> implements Iterable<JobType> {
     private final static Logger log = LogManager.getLogger(IndexJobConfigSource.class);
 
     private final String indexName;
     private final Client client;
     private final JobConfigFactory<JobType> jobFactory;
+    private final JobDistributor jobDistributor;
 
-    public IndexJobConfigSource(String indexName, Client client, JobConfigFactory<JobType> jobFactory) {
+    public IndexJobConfigSource(String indexName, Client client, JobConfigFactory<JobType> jobFactory, JobDistributor jobDistributor) {
         this.indexName = indexName;
         this.client = client;
         this.jobFactory = jobFactory;
-
+        this.jobDistributor = jobDistributor;
     }
 
     @Override
     public Iterator<JobType> iterator() {
-        return new IndexJobConfigIterator();
+        Iterator<JobType> result = new IndexJobConfigIterator();
+
+        if (jobDistributor != null) {
+            result = Iterators.filter(result, (job) -> this.jobDistributor.isJobSelected(job));
+        }
+
+        return result;
     }
 
     private class IndexJobConfigIterator implements Iterator<JobType> {

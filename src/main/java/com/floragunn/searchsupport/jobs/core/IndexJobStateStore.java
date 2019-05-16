@@ -52,19 +52,19 @@ import org.quartz.TriggerKey;
 import org.quartz.impl.matchers.GroupMatcher;
 import org.quartz.impl.matchers.StringMatcher;
 import org.quartz.spi.ClassLoadHelper;
-import org.quartz.spi.JobStore;
 import org.quartz.spi.OperableTrigger;
 import org.quartz.spi.SchedulerSignaler;
 import org.quartz.spi.TriggerFiredBundle;
 import org.quartz.spi.TriggerFiredResult;
 
+import com.floragunn.searchsupport.jobs.cluster.DistributedJobStore;
 import com.floragunn.searchsupport.jobs.config.JobConfig;
 import com.floragunn.searchsupport.jobs.config.JobConfigFactory;
 import com.google.common.collect.HashBasedTable;
 import com.google.common.collect.Sets;
 import com.google.common.collect.Table;
 
-public class IndexJobStateStore<JobType extends com.floragunn.searchsupport.jobs.config.JobConfig> implements JobStore {
+public class IndexJobStateStore<JobType extends com.floragunn.searchsupport.jobs.config.JobConfig> implements DistributedJobStore {
     private static final Logger log = LogManager.getLogger(IndexJobStateStore.class);
 
     private final String indexName;
@@ -90,6 +90,23 @@ public class IndexJobStateStore<JobType extends com.floragunn.searchsupport.jobs
         this.client = client;
         this.jobConfigSource = jobConfigSource;
         this.jobFactory = jobFactory;
+    }
+
+    @Override
+    public void clusterConfigChanged() {
+        // TODO sync with scheduler
+
+        new Thread() {
+            public void run() {
+                log.debug("Reinitializing jobs");
+                schedulerPaused();
+                initJobs();
+                // TODO better
+                signaler.signalSchedulingChange(System.currentTimeMillis());
+                schedulerResumed();
+            }
+        }.start();
+
     }
 
     @Override
@@ -1128,12 +1145,22 @@ public class IndexJobStateStore<JobType extends com.floragunn.searchsupport.jobs
         Collection<StoredJobDetail> jobs = this.loadJobs();
 
         synchronized (this) {
+            resetJobs();
+
             for (StoredJobDetail job : jobs) {
                 addToCollections(job);
             }
 
             updateAllTriggerStates();
         }
+    }
+
+    private synchronized void resetJobs() {
+        keyToJobMap.clear();
+        keyToTriggerMap.clear();
+        groupAndKeyToJobMap.clear();
+        groupAndKeyToTriggerMap.clear();
+        activeTriggers.clear();
     }
 
     private Collection<StoredJobDetail> loadJobs() {
@@ -1193,10 +1220,11 @@ public class IndexJobStateStore<JobType extends com.floragunn.searchsupport.jobs
 
             for (SearchHit searchHit : searchResponse.getHits().getHits()) {
                 try {
-                    StoredOperableTrigger storedOperableTrigger = StoredOperableTrigger.fromAttributeMap(triggerIds.get(searchHit.getId()),
-                            searchHit.getSourceAsMap());
+                    TriggerKey triggerKey = triggerIds.get(searchHit.getId());
 
-                    result.put(storedOperableTrigger.getKey(), storedOperableTrigger);
+                    StoredOperableTrigger storedOperableTrigger = StoredOperableTrigger.fromAttributeMap(triggerKey, searchHit.getSourceAsMap());
+
+                    result.put(triggerKey, storedOperableTrigger);
 
                 } catch (Exception e) {
                     log.error("Error while loading " + searchHit, e);
