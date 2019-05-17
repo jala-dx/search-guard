@@ -41,6 +41,7 @@ public class SchedulerBuilder<JobType extends JobConfig> {
     private String nodeFilter;
     private ClusterService clusterService;
     private Map<String, SchedulerPlugin> schedulerPluginMap = new HashMap<>();
+    private String nodeId;
 
     public SchedulerBuilder<JobType> name(String name) {
         this.name = name;
@@ -119,8 +120,12 @@ public class SchedulerBuilder<JobType extends JobConfig> {
             this.jobConfigSource = new IndexJobConfigSource<>(configIndex, client, jobFactory, jobDistributor);
         }
 
+        if (clusterService != null) {
+            this.nodeId = clusterService.localNode().getId();
+        }
+
         if (this.jobStore == null) {
-            this.jobStore = new IndexJobStateStore<>(stateIndex, client, jobConfigSource, jobFactory);
+            this.jobStore = new IndexJobStateStore<>(stateIndex, nodeId, client, jobConfigSource, jobFactory);
         }
 
         if (this.jobStore instanceof DistributedJobStore && this.jobDistributor != null) {
