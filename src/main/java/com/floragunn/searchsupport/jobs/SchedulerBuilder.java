@@ -7,6 +7,7 @@ import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 import org.elasticsearch.client.Client;
 import org.elasticsearch.cluster.service.ClusterService;
+import org.elasticsearch.common.component.LifecycleListener;
 import org.quartz.Scheduler;
 import org.quartz.SchedulerException;
 import org.quartz.impl.DirectSchedulerFactory;
@@ -130,7 +131,7 @@ public class SchedulerBuilder<JobType extends JobConfig> {
             this.threadPool = new SimpleThreadPool(maxThreads, threadPriority);
         }
 
-        schedulerPluginMap.put(CleanupSchedulerPlugin.class.getName(), new CleanupSchedulerPlugin(jobDistributor));
+        schedulerPluginMap.put(CleanupSchedulerPlugin.class.getName(), new CleanupSchedulerPlugin(clusterService, jobDistributor));
 
         DirectSchedulerFactory.getInstance().createScheduler(name, name, threadPool, jobStore, schedulerPluginMap, null, -1, -1, -1, false, null);
 
@@ -141,15 +142,34 @@ public class SchedulerBuilder<JobType extends JobConfig> {
 
     private static class CleanupSchedulerPlugin implements SchedulerPlugin {
 
+        private Scheduler scheduler;
         private JobDistributor jobDistributor;
+        private ClusterService clusterService;
 
-        CleanupSchedulerPlugin(JobDistributor jobDistributor) {
+        CleanupSchedulerPlugin(ClusterService clusterService, JobDistributor jobDistributor) {
             this.jobDistributor = jobDistributor;
+            this.clusterService = clusterService;
         }
 
         @Override
         public void initialize(String name, Scheduler scheduler, ClassLoadHelper loadHelper) throws SchedulerException {
+            this.scheduler = scheduler;
 
+            if (this.clusterService != null) {
+
+                this.clusterService.addLifecycleListener(new LifecycleListener() {
+                    public void beforeStop() {
+                        log.info("Shutting down scheduler " + CleanupSchedulerPlugin.this.scheduler + " because node is going down");
+
+                        try {
+                            // TODO wait for jobs to complete?
+                            scheduler.shutdown();
+                        } catch (Exception e) {
+                            log.error("Error while shutting down scheduler " + CleanupSchedulerPlugin.this.scheduler, e);
+                        }
+                    }
+                });
+            }
         }
 
         @Override
@@ -168,6 +188,6 @@ public class SchedulerBuilder<JobType extends JobConfig> {
                 }
             }
         }
-
     }
+
 }

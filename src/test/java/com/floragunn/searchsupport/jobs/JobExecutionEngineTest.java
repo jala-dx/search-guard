@@ -28,7 +28,7 @@ public class JobExecutionEngineTest extends SingleClusterTest {
         setup(settings);
 
         try (TransportClient tc = getInternalTransportClient()) {
-            // tc.admin().indices().create(new CreateIndexRequest("testjobconfig")).actionGet();         
+
             tc.index(new IndexRequest("testjobconfig").setRefreshPolicy(RefreshPolicy.IMMEDIATE)
                     .source("{\"trigger\": {\"schedule\": {\"cron\": \"0/1 * * * * ?\"}}}", XContentType.JSON)).actionGet();
 

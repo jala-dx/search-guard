@@ -31,8 +31,6 @@ public class DefaultJobConfigFactory implements JobConfigFactory<DefaultJobConfi
     private String cronScheduleTriggerPath = "$.trigger.schedule.cron";
     private String jobDataPath = "$";
     private final static Configuration JSON_PATH_CONFIG = Configuration.builder().options(com.jayway.jsonpath.Option.SUPPRESS_EXCEPTIONS).build();
-    private final static TypeRef<Map<String, Object>> JSON_MAP_TYPE_REF = new TypeRef<Map<String, Object>>() {
-    };
 
     public DefaultJobConfigFactory(Class<? extends Job> jobClass) {
         this.jobClass = jobClass;
@@ -59,7 +57,9 @@ public class DefaultJobConfigFactory implements JobConfigFactory<DefaultJobConfi
         }
 
         if (this.jobDataPath != null) {
-            result.setJobDataMap(ctx.read(jobDataPath, Map.class));
+            @SuppressWarnings("unchecked")
+            Map<String, Object> jobDataMap = ctx.read(jobDataPath, Map.class);
+            result.setJobDataMap(jobDataMap);
         }
 
         Object cronScheduleTriggers = ctx.read(cronScheduleTriggerPath);
