@@ -30,7 +30,7 @@ public class JobExecutionEngineTest extends SingleClusterTest {
         try (TransportClient tc = getInternalTransportClient()) {
 
             tc.index(new IndexRequest("testjobconfig").setRefreshPolicy(RefreshPolicy.IMMEDIATE)
-                    .source("{\"trigger\": {\"schedule\": {\"cron\": \"*/5 * * * * ?\"}}}", XContentType.JSON)).actionGet();
+                    .source("{\"trigger\": {\"schedule\": {\"cron\": \"*/2 * * * * ?\"}}}", XContentType.JSON)).actionGet();
 
             for (PluginAwareNode node : this.clusterHelper.allNodes()) {
                 ClusterService clusterService = node.injector().getInstance(ClusterService.class);
@@ -41,11 +41,11 @@ public class JobExecutionEngineTest extends SingleClusterTest {
                 scheduler.start();
             }
 
-            Thread.sleep(25 * 1000);
+            Thread.sleep(15 * 1000);
 
             this.clusterHelper.allNodes().get(1).close();
 
-            Thread.sleep(25 * 1000);
+            Thread.sleep(15 * 1000);
 
         }
 
