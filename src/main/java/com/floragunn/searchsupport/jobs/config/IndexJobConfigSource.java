@@ -92,6 +92,7 @@ public class IndexJobConfigSource<JobType extends JobConfig> implements Iterable
             if (this.current == null) {
                 this.done = true;
             }
+
         }
 
     }

@@ -1,7 +1,13 @@
 package com.floragunn.searchsupport.jobs;
 
+import java.lang.management.ManagementFactory;
+import java.lang.management.ThreadInfo;
+import java.lang.management.ThreadMXBean;
 import java.util.HashMap;
 import java.util.Map;
+import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
@@ -19,6 +25,8 @@ import org.quartz.spi.ThreadPool;
 
 import com.floragunn.searchsupport.jobs.cluster.DistributedJobStore;
 import com.floragunn.searchsupport.jobs.cluster.JobDistributor;
+import com.floragunn.searchsupport.jobs.cluster.NodeComparator;
+import com.floragunn.searchsupport.jobs.cluster.NodeIdComparator;
 import com.floragunn.searchsupport.jobs.config.IndexJobConfigSource;
 import com.floragunn.searchsupport.jobs.config.JobConfig;
 import com.floragunn.searchsupport.jobs.config.JobConfigFactory;
@@ -41,6 +49,7 @@ public class SchedulerBuilder<JobType extends JobConfig> {
     private String nodeFilter;
     private ClusterService clusterService;
     private Map<String, SchedulerPlugin> schedulerPluginMap = new HashMap<>();
+    private NodeComparator<?> nodeComparator;
     private String nodeId;
 
     public SchedulerBuilder<JobType> name(String name) {
@@ -103,6 +112,11 @@ public class SchedulerBuilder<JobType extends JobConfig> {
         return this;
     }
 
+    public SchedulerBuilder<JobType> nodeComparator(NodeComparator<?> nodeComparator) {
+        this.nodeComparator = nodeComparator;
+        return this;
+    }
+
     public Scheduler build() throws SchedulerException {
         if (this.configIndex == null) {
             this.configIndex = name;
@@ -112,8 +126,12 @@ public class SchedulerBuilder<JobType extends JobConfig> {
             this.stateIndex = this.configIndex + "_state";
         }
 
+        if (this.nodeComparator == null && clusterService != null) {
+            this.nodeComparator = new NodeIdComparator(clusterService);
+        }
+
         if (this.jobDistributor == null && clusterService != null) {
-            this.jobDistributor = new JobDistributor(name, nodeFilter, clusterService, null);
+            this.jobDistributor = new JobDistributor(name, nodeFilter, clusterService, null, this.nodeComparator);
         }
 
         if (this.jobConfigSource == null) {
@@ -136,7 +154,7 @@ public class SchedulerBuilder<JobType extends JobConfig> {
             this.threadPool = new SimpleThreadPool(maxThreads, threadPriority);
         }
 
-        schedulerPluginMap.put(CleanupSchedulerPlugin.class.getName(), new CleanupSchedulerPlugin(clusterService, jobDistributor));
+        schedulerPluginMap.put(CleanupSchedulerPlugin.class.getName(), new CleanupSchedulerPlugin(clusterService, jobDistributor, jobStore));
 
         DirectSchedulerFactory.getInstance().createScheduler(name, name, threadPool, jobStore, schedulerPluginMap, null, -1, -1, -1, false, null);
 
@@ -150,10 +168,12 @@ public class SchedulerBuilder<JobType extends JobConfig> {
         private Scheduler scheduler;
         private JobDistributor jobDistributor;
         private ClusterService clusterService;
+        private JobStore jobStore;
 
-        CleanupSchedulerPlugin(ClusterService clusterService, JobDistributor jobDistributor) {
+        CleanupSchedulerPlugin(ClusterService clusterService, JobDistributor jobDistributor, JobStore jobStore) {
             this.jobDistributor = jobDistributor;
             this.clusterService = clusterService;
+            this.jobStore = jobStore;
         }
 
         @Override
@@ -167,13 +187,54 @@ public class SchedulerBuilder<JobType extends JobConfig> {
                         log.info("Shutting down scheduler " + CleanupSchedulerPlugin.this.scheduler + " because node is going down");
 
                         try {
-                            // TODO wait for jobs to complete?
-                            scheduler.shutdown();
+                            jobStore.shutdown();
+                        } catch (Exception e) {
+                            log.error("Error while shutting down jobStore " + jobStore, e);
+                        }
+
+                        try {
+                            // TODO make timeout configurable
+                            Executors.newSingleThreadExecutor().submit(() -> shutdownScheduler()).get(10000, TimeUnit.MILLISECONDS);
+                        } catch (TimeoutException e) {
+                            log.error("Shutting down " + CleanupSchedulerPlugin.this.scheduler + " timed out", e);
+                            log.error(getThreadDump());
                         } catch (Exception e) {
                             log.error("Error while shutting down scheduler " + CleanupSchedulerPlugin.this.scheduler, e);
                         }
+
                     }
+
                 });
+            }
+        }
+
+        public static String getThreadDump() {
+            final StringBuilder dump = new StringBuilder();
+            final ThreadMXBean threadMXBean = ManagementFactory.getThreadMXBean();
+            final ThreadInfo[] threadInfos = threadMXBean.getThreadInfo(threadMXBean.getAllThreadIds(), 100);
+            for (ThreadInfo threadInfo : threadInfos) {
+                dump.append('"');
+                dump.append(threadInfo.getThreadName());
+                dump.append("\" ");
+                final Thread.State state = threadInfo.getThreadState();
+                dump.append("\n   java.lang.Thread.State: ");
+                dump.append(state);
+                final StackTraceElement[] stackTraceElements = threadInfo.getStackTrace();
+                for (final StackTraceElement stackTraceElement : stackTraceElements) {
+                    dump.append("\n        at ");
+                    dump.append(stackTraceElement);
+                }
+                dump.append("\n\n");
+            }
+            return dump.toString();
+        }
+
+        private void shutdownScheduler() {
+            try {
+                scheduler.shutdown(true);
+                log.info("Shutdown complete");
+            } catch (Exception e) {
+                log.error("Error while shutting down scheduler " + CleanupSchedulerPlugin.this.scheduler, e);
             }
         }
 

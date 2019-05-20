@@ -26,8 +26,15 @@ import org.elasticsearch.common.xcontent.ToXContentObject;
 import org.elasticsearch.common.xcontent.XContentBuilder;
 import org.elasticsearch.common.xcontent.XContentFactory;
 import org.elasticsearch.index.IndexNotFoundException;
+import org.elasticsearch.index.engine.Engine.Delete;
+import org.elasticsearch.index.engine.Engine.DeleteResult;
+import org.elasticsearch.index.engine.Engine.Index;
+import org.elasticsearch.index.engine.Engine.IndexResult;
+import org.elasticsearch.index.engine.Engine.Result;
 import org.elasticsearch.index.query.QueryBuilder;
 import org.elasticsearch.index.query.QueryBuilders;
+import org.elasticsearch.index.shard.IndexingOperationListener;
+import org.elasticsearch.index.shard.ShardId;
 import org.elasticsearch.search.SearchHit;
 import org.quartz.Calendar;
 import org.quartz.DailyTimeIntervalTrigger;
@@ -63,6 +70,7 @@ import org.quartz.spi.TriggerFiredResult;
 import com.floragunn.searchsupport.jobs.cluster.DistributedJobStore;
 import com.floragunn.searchsupport.jobs.config.JobConfig;
 import com.floragunn.searchsupport.jobs.config.JobConfigFactory;
+import com.google.common.base.Objects;
 import com.google.common.collect.HashBasedTable;
 import com.google.common.collect.Sets;
 import com.google.common.collect.Table;
@@ -77,20 +85,21 @@ public class IndexJobStateStore<JobType extends com.floragunn.searchsupport.jobs
     private final String nodeId;
     private final Client client;
     private SchedulerSignaler signaler;
-    private final Map<JobKey, StoredJobDetail> keyToJobMap = new HashMap<>();
-    private final Map<TriggerKey, StoredOperableTrigger> keyToTriggerMap = new HashMap<>();
-    private final Table<String, JobKey, StoredJobDetail> groupAndKeyToJobMap = HashBasedTable.create();
-    private final Table<String, TriggerKey, StoredOperableTrigger> groupAndKeyToTriggerMap = HashBasedTable.create();
+    private final Map<JobKey, InternalJobDetail> keyToJobMap = new HashMap<>();
+    private final Map<TriggerKey, InternalOperableTrigger> keyToTriggerMap = new HashMap<>();
+    private final Table<String, JobKey, InternalJobDetail> groupAndKeyToJobMap = HashBasedTable.create();
+    private final Table<String, TriggerKey, InternalOperableTrigger> groupAndKeyToTriggerMap = HashBasedTable.create();
     // TODO check for changes that make TreeSet inconsistent
-    private final TreeSet<StoredOperableTrigger> activeTriggers = new TreeSet<StoredOperableTrigger>(new Trigger.TriggerTimeComparator());
+    private final TreeSet<InternalOperableTrigger> activeTriggers = new TreeSet<InternalOperableTrigger>(new Trigger.TriggerTimeComparator());
     private final Set<String> pausedTriggerGroups = new HashSet<String>();
     private final Set<String> pausedJobGroups = new HashSet<String>();
     private final Set<JobKey> blockedJobs = new HashSet<JobKey>();
     private final Iterable<JobType> jobConfigSource;
     private final JobConfigFactory<JobType> jobFactory;
     private boolean schedulerRunning = false;
+    private volatile boolean shutdown = false;
     private long misfireThreshold = 5000l;
-    private ThreadLocal<Set<StoredOperableTrigger>> dirtyTriggers = ThreadLocal.withInitial(() -> new HashSet<>());
+    private ThreadLocal<Set<InternalOperableTrigger>> dirtyTriggers = ThreadLocal.withInitial(() -> new HashSet<>());
 
     public IndexJobStateStore(String indexName, String nodeId, Client client, Iterable<JobType> jobConfigSource,
             JobConfigFactory<JobType> jobFactory) {
@@ -104,13 +113,30 @@ public class IndexJobStateStore<JobType extends com.floragunn.searchsupport.jobs
 
     @Override
     public void clusterConfigChanged() {
+        if (shutdown) {
+            return;
+        }
+
         // TODO sync with scheduler
 
         new Thread() {
             public void run() {
-                log.info("Reinitializing jobs for " + IndexJobStateStore.this);
-                initJobs();
-                signaler.signalSchedulingChange(0L);
+                try {
+                    log.info("Reinitializing jobs for " + IndexJobStateStore.this);
+                    initJobs();
+                    signaler.signalSchedulingChange(0L);
+                } catch (Exception e) {
+                    try {
+                        // Let a potential cluster shutdown catch up
+                        Thread.sleep(500);
+                    } catch (InterruptedException e1) {
+                        log.debug(e1);
+                    }
+                    if (!shutdown) {
+                        log.error("Error while initializing jobs for " + IndexJobStateStore.this, e);
+                        // TODO retry?
+                    }
+                }
             }
         }.start();
 
@@ -139,6 +165,10 @@ public class IndexJobStateStore<JobType extends com.floragunn.searchsupport.jobs
 
     @Override
     public void shutdown() {
+        if (!shutdown) {
+            log.info("Shutdown of " + this);
+            shutdown = true;
+        }
     }
 
     @Override
@@ -159,19 +189,19 @@ public class IndexJobStateStore<JobType extends com.floragunn.searchsupport.jobs
 
     @Override
     public void storeJobAndTrigger(JobDetail newJob, OperableTrigger newTrigger) throws ObjectAlreadyExistsException, JobPersistenceException {
-        StoredOperableTrigger storedOperableTrigger;
+        InternalOperableTrigger internalOperableTrigger;
 
         synchronized (this) {
             storeJob(newJob, false);
-            storedOperableTrigger = storeTriggerInHeap(newTrigger, false);
+            internalOperableTrigger = storeTriggerInHeap(newTrigger, false);
         }
 
-        setTriggerStatusInIndex(storedOperableTrigger);
+        setTriggerStatusInIndex(internalOperableTrigger);
     }
 
     @Override
     public synchronized void storeJob(JobDetail newJob, boolean replaceExisting) throws ObjectAlreadyExistsException, JobPersistenceException {
-        StoredJobDetail newJobLocal = new StoredJobDetail(newJob);
+        InternalJobDetail newJobLocal = new InternalJobDetail(newJob, this);
 
         addToCollections(newJobLocal);
     }
@@ -180,28 +210,28 @@ public class IndexJobStateStore<JobType extends com.floragunn.searchsupport.jobs
     public void storeJobsAndTriggers(Map<JobDetail, Set<? extends Trigger>> triggersAndJobs, boolean replace)
             throws ObjectAlreadyExistsException, JobPersistenceException {
 
-        ArrayList<StoredOperableTrigger> storedOperableTriggers = new ArrayList<>();
+        ArrayList<InternalOperableTrigger> internalOperableTriggers = new ArrayList<>();
 
         synchronized (this) {
             for (Entry<JobDetail, Set<? extends Trigger>> entry : triggersAndJobs.entrySet()) {
                 storeJob(entry.getKey(), true);
 
                 for (Trigger trigger : entry.getValue()) {
-                    storedOperableTriggers.add(storeTriggerInHeap((OperableTrigger) trigger, true));
+                    internalOperableTriggers.add(storeTriggerInHeap((OperableTrigger) trigger, true));
                 }
             }
         }
 
-        for (StoredOperableTrigger storedOperableTrigger : storedOperableTriggers) {
-            setTriggerStatusInIndex(storedOperableTrigger);
+        for (InternalOperableTrigger internalOperableTrigger : internalOperableTriggers) {
+            setTriggerStatusInIndex(internalOperableTrigger);
         }
     }
 
     @Override
     public void storeTrigger(OperableTrigger newTrigger, boolean replaceExisting) throws ObjectAlreadyExistsException, JobPersistenceException {
-        StoredOperableTrigger storedOperableTrigger = storeTriggerInHeap(newTrigger, replaceExisting);
+        InternalOperableTrigger internalOperableTrigger = storeTriggerInHeap(newTrigger, replaceExisting);
 
-        setTriggerStatusInIndex(storedOperableTrigger);
+        setTriggerStatusInIndex(internalOperableTrigger);
     }
 
     @Override
@@ -238,22 +268,22 @@ public class IndexJobStateStore<JobType extends com.floragunn.searchsupport.jobs
 
     @Override
     public synchronized boolean removeTrigger(TriggerKey triggerKey) {
-        StoredOperableTrigger storedOperableTrigger = this.keyToTriggerMap.remove(triggerKey);
+        InternalOperableTrigger internalOperableTrigger = this.keyToTriggerMap.remove(triggerKey);
 
-        if (storedOperableTrigger == null) {
+        if (internalOperableTrigger == null) {
             return false;
         }
 
         this.groupAndKeyToTriggerMap.remove(triggerKey.getGroup(), triggerKey);
-        this.activeTriggers.remove(storedOperableTrigger);
+        this.activeTriggers.remove(internalOperableTrigger);
 
-        StoredJobDetail storedJobDetail = this.keyToJobMap.get(storedOperableTrigger.getJobKey());
+        InternalJobDetail internalJobDetail = this.keyToJobMap.get(internalOperableTrigger.getJobKey());
 
-        if (storedJobDetail != null) {
-            storedJobDetail.triggers.remove(storedOperableTrigger);
+        if (internalJobDetail != null) {
+            internalJobDetail.triggers.remove(internalOperableTrigger);
 
-            if (storedJobDetail.triggers.isEmpty()) {
-                removeJob(storedJobDetail.getKey());
+            if (internalJobDetail.triggers.isEmpty()) {
+                removeJob(internalJobDetail.getKey());
             }
 
         }
@@ -275,25 +305,25 @@ public class IndexJobStateStore<JobType extends com.floragunn.searchsupport.jobs
 
     @Override
     public boolean replaceTrigger(TriggerKey triggerKey, OperableTrigger newTrigger) throws JobPersistenceException {
-        StoredOperableTrigger storedOperableTrigger;
+        InternalOperableTrigger internalOperableTrigger;
 
         synchronized (this) {
-            storedOperableTrigger = this.keyToTriggerMap.get(triggerKey);
+            internalOperableTrigger = this.keyToTriggerMap.get(triggerKey);
 
-            if (storedOperableTrigger == null) {
+            if (internalOperableTrigger == null) {
                 return false;
             }
 
-            storedOperableTrigger.setDelegate(newTrigger);
+            internalOperableTrigger.setDelegate(newTrigger);
 
-            if (updateTriggerStateToIdle(storedOperableTrigger)) {
-                activeTriggers.add(storedOperableTrigger);
+            if (updateTriggerStateToIdle(internalOperableTrigger)) {
+                activeTriggers.add(internalOperableTrigger);
             } else {
-                activeTriggers.remove(storedOperableTrigger);
+                activeTriggers.remove(internalOperableTrigger);
             }
         }
 
-        setTriggerStatusInIndex(storedOperableTrigger);
+        setTriggerStatusInIndex(internalOperableTrigger);
 
         return true;
     }
@@ -370,7 +400,7 @@ public class IndexJobStateStore<JobType extends com.floragunn.searchsupport.jobs
             StringMatcher.StringOperatorName operator = matcher.getCompareWithOperator();
             String matcherValue = matcher.getCompareToValue();
 
-            for (Map.Entry<String, Map<JobKey, StoredJobDetail>> entry : this.groupAndKeyToJobMap.rowMap().entrySet()) {
+            for (Map.Entry<String, Map<JobKey, InternalJobDetail>> entry : this.groupAndKeyToJobMap.rowMap().entrySet()) {
                 if (operator.evaluate(entry.getKey(), matcherValue)) {
                     result.addAll(entry.getValue().keySet());
                 }
@@ -389,7 +419,7 @@ public class IndexJobStateStore<JobType extends com.floragunn.searchsupport.jobs
             StringMatcher.StringOperatorName operator = matcher.getCompareWithOperator();
             String matcherValue = matcher.getCompareToValue();
 
-            for (Map.Entry<String, Map<TriggerKey, StoredOperableTrigger>> entry : this.groupAndKeyToTriggerMap.rowMap().entrySet()) {
+            for (Map.Entry<String, Map<TriggerKey, InternalOperableTrigger>> entry : this.groupAndKeyToTriggerMap.rowMap().entrySet()) {
                 if (operator.evaluate(entry.getKey(), matcherValue)) {
                     result.addAll(entry.getValue().keySet());
                 }
@@ -417,67 +447,67 @@ public class IndexJobStateStore<JobType extends com.floragunn.searchsupport.jobs
 
     @Override
     public synchronized List<OperableTrigger> getTriggersForJob(JobKey jobKey) {
-        StoredJobDetail storedJobDetail = this.keyToJobMap.get(jobKey);
+        InternalJobDetail internalJobDetail = this.keyToJobMap.get(jobKey);
 
-        if (storedJobDetail == null) {
+        if (internalJobDetail == null) {
             return null;
         }
 
-        return storedJobDetail.triggers.stream().map(s -> s.delegate).collect(Collectors.toList());
+        return internalJobDetail.triggers.stream().map(s -> s.delegate).collect(Collectors.toList());
     }
 
     @Override
     public synchronized TriggerState getTriggerState(TriggerKey triggerKey) throws JobPersistenceException {
-        StoredOperableTrigger storedOperableTrigger = this.keyToTriggerMap.get(triggerKey);
+        InternalOperableTrigger internalOperableTrigger = this.keyToTriggerMap.get(triggerKey);
 
-        if (storedOperableTrigger == null) {
+        if (internalOperableTrigger == null) {
             return TriggerState.NONE;
         } else {
-            return storedOperableTrigger.state.getTriggerState();
+            return internalOperableTrigger.state.getTriggerState();
         }
     }
 
     @Override
     public void resetTriggerFromErrorState(TriggerKey triggerKey) throws JobPersistenceException {
-        StoredOperableTrigger storedOperableTrigger;
+        InternalOperableTrigger internalOperableTrigger;
 
         synchronized (this) {
-            storedOperableTrigger = this.keyToTriggerMap.get(triggerKey);
+            internalOperableTrigger = this.keyToTriggerMap.get(triggerKey);
 
-            if (storedOperableTrigger == null || storedOperableTrigger.state != StoredOperableTrigger.State.ERROR) {
+            if (internalOperableTrigger == null || internalOperableTrigger.state != InternalOperableTrigger.State.ERROR) {
                 return;
             }
 
-            if (updateTriggerStateToIdle(storedOperableTrigger)) {
-                activeTriggers.add(storedOperableTrigger);
+            if (updateTriggerStateToIdle(internalOperableTrigger)) {
+                activeTriggers.add(internalOperableTrigger);
             } else {
-                activeTriggers.remove(storedOperableTrigger);
+                activeTriggers.remove(internalOperableTrigger);
             }
         }
 
-        setTriggerStatusInIndex(storedOperableTrigger);
+        setTriggerStatusInIndex(internalOperableTrigger);
 
     }
 
     @Override
     public void pauseTrigger(TriggerKey triggerKey) throws JobPersistenceException {
-        StoredOperableTrigger storedOperableTrigger;
+        InternalOperableTrigger internalOperableTrigger;
 
         synchronized (this) {
-            storedOperableTrigger = this.keyToTriggerMap.get(triggerKey);
+            internalOperableTrigger = this.keyToTriggerMap.get(triggerKey);
 
-            if (!pauseTriggerInHeap(storedOperableTrigger)) {
+            if (!pauseTriggerInHeap(internalOperableTrigger)) {
                 return;
             }
         }
 
-        setTriggerStatusInIndex(storedOperableTrigger);
+        setTriggerStatusInIndex(internalOperableTrigger);
 
     }
 
     @Override
     public Collection<String> pauseTriggers(GroupMatcher<TriggerKey> matcher) throws JobPersistenceException {
-        Collection<StoredOperableTrigger> matchedTriggers;
+        Collection<InternalOperableTrigger> matchedTriggers;
         Collection<String> result;
 
         synchronized (this) {
@@ -488,8 +518,8 @@ public class IndexJobStateStore<JobType extends com.floragunn.searchsupport.jobs
                 return Collections.emptyList();
             }
 
-            for (StoredOperableTrigger storedOperableTrigger : matchedTriggers) {
-                pauseTriggerInHeap(storedOperableTrigger);
+            for (InternalOperableTrigger internalOperableTrigger : matchedTriggers) {
+                pauseTriggerInHeap(internalOperableTrigger);
             }
 
             result = matchedTriggers.stream().map(t -> t.getKey().getGroup()).collect(Collectors.toSet());
@@ -503,14 +533,14 @@ public class IndexJobStateStore<JobType extends com.floragunn.searchsupport.jobs
     @Override
     public void pauseJob(JobKey jobKey) throws JobPersistenceException {
         synchronized (this) {
-            StoredJobDetail storedJobDetail = this.keyToJobMap.get(jobKey);
+            InternalJobDetail internalJobDetail = this.keyToJobMap.get(jobKey);
 
-            if (storedJobDetail == null) {
+            if (internalJobDetail == null) {
                 return;
             }
 
-            for (StoredOperableTrigger storedOperableTrigger : storedJobDetail.triggers) {
-                pauseTriggerInHeap(storedOperableTrigger);
+            for (InternalOperableTrigger internalOperableTrigger : internalJobDetail.triggers) {
+                pauseTriggerInHeap(internalOperableTrigger);
             }
         }
 
@@ -519,7 +549,7 @@ public class IndexJobStateStore<JobType extends com.floragunn.searchsupport.jobs
 
     @Override
     public Collection<String> pauseJobs(GroupMatcher<JobKey> groupMatcher) throws JobPersistenceException {
-        Collection<StoredJobDetail> matchedJobs;
+        Collection<InternalJobDetail> matchedJobs;
         Collection<String> result;
 
         synchronized (this) {
@@ -530,9 +560,9 @@ public class IndexJobStateStore<JobType extends com.floragunn.searchsupport.jobs
                 return Collections.emptyList();
             }
 
-            for (StoredJobDetail storedJobDetail : matchedJobs) {
-                for (StoredOperableTrigger storedOperableTrigger : storedJobDetail.triggers) {
-                    pauseTriggerInHeap(storedOperableTrigger);
+            for (InternalJobDetail internalJobDetail : matchedJobs) {
+                for (InternalOperableTrigger internalOperableTrigger : internalJobDetail.triggers) {
+                    pauseTriggerInHeap(internalOperableTrigger);
                 }
             }
 
@@ -546,23 +576,23 @@ public class IndexJobStateStore<JobType extends com.floragunn.searchsupport.jobs
 
     @Override
     public void resumeTrigger(TriggerKey triggerKey) throws JobPersistenceException {
-        StoredOperableTrigger storedOperableTrigger;
+        InternalOperableTrigger internalOperableTrigger;
 
         synchronized (this) {
-            storedOperableTrigger = this.keyToTriggerMap.get(triggerKey);
+            internalOperableTrigger = this.keyToTriggerMap.get(triggerKey);
 
-            if (!resumeTriggerInHeap(storedOperableTrigger)) {
+            if (!resumeTriggerInHeap(internalOperableTrigger)) {
                 return;
             }
 
         }
 
-        setTriggerStatusInIndex(storedOperableTrigger);
+        setTriggerStatusInIndex(internalOperableTrigger);
     }
 
     @Override
     public Collection<String> resumeTriggers(GroupMatcher<TriggerKey> matcher) throws JobPersistenceException {
-        Collection<StoredOperableTrigger> matchedTriggers;
+        Collection<InternalOperableTrigger> matchedTriggers;
         Collection<String> result;
 
         synchronized (this) {
@@ -573,8 +603,8 @@ public class IndexJobStateStore<JobType extends com.floragunn.searchsupport.jobs
                 return Collections.emptyList();
             }
 
-            for (StoredOperableTrigger storedOperableTrigger : matchedTriggers) {
-                resumeTriggerInHeap(storedOperableTrigger);
+            for (InternalOperableTrigger internalOperableTrigger : matchedTriggers) {
+                resumeTriggerInHeap(internalOperableTrigger);
             }
 
             result = matchedTriggers.stream().map(t -> t.getKey().getGroup()).collect(Collectors.toSet());
@@ -594,14 +624,14 @@ public class IndexJobStateStore<JobType extends com.floragunn.searchsupport.jobs
     @Override
     public void resumeJob(JobKey jobKey) throws JobPersistenceException {
         synchronized (this) {
-            StoredJobDetail storedJobDetail = this.keyToJobMap.get(jobKey);
+            InternalJobDetail internalJobDetail = this.keyToJobMap.get(jobKey);
 
-            if (storedJobDetail == null) {
+            if (internalJobDetail == null) {
                 return;
             }
 
-            for (StoredOperableTrigger storedOperableTrigger : storedJobDetail.triggers) {
-                resumeTriggerInHeap(storedOperableTrigger);
+            for (InternalOperableTrigger internalOperableTrigger : internalJobDetail.triggers) {
+                resumeTriggerInHeap(internalOperableTrigger);
             }
         }
 
@@ -610,7 +640,7 @@ public class IndexJobStateStore<JobType extends com.floragunn.searchsupport.jobs
 
     @Override
     public Collection<String> resumeJobs(GroupMatcher<JobKey> groupMatcher) throws JobPersistenceException {
-        Collection<StoredJobDetail> matchedJobs;
+        Collection<InternalJobDetail> matchedJobs;
         Collection<String> result;
 
         synchronized (this) {
@@ -621,9 +651,9 @@ public class IndexJobStateStore<JobType extends com.floragunn.searchsupport.jobs
                 return Collections.emptyList();
             }
 
-            for (StoredJobDetail storedJobDetail : matchedJobs) {
-                for (StoredOperableTrigger storedOperableTrigger : storedJobDetail.triggers) {
-                    resumeTriggerInHeap(storedOperableTrigger);
+            for (InternalJobDetail internalJobDetail : matchedJobs) {
+                for (InternalOperableTrigger internalOperableTrigger : internalJobDetail.triggers) {
+                    resumeTriggerInHeap(internalOperableTrigger);
                 }
             }
 
@@ -638,8 +668,8 @@ public class IndexJobStateStore<JobType extends com.floragunn.searchsupport.jobs
     @Override
     public void pauseAll() throws JobPersistenceException {
         synchronized (this) {
-            for (StoredOperableTrigger storedOperableTrigger : this.keyToTriggerMap.values()) {
-                pauseTriggerInHeap(storedOperableTrigger);
+            for (InternalOperableTrigger internalOperableTrigger : this.keyToTriggerMap.values()) {
+                pauseTriggerInHeap(internalOperableTrigger);
             }
         }
 
@@ -650,8 +680,8 @@ public class IndexJobStateStore<JobType extends com.floragunn.searchsupport.jobs
     public void resumeAll() throws JobPersistenceException {
 
         synchronized (this) {
-            for (StoredOperableTrigger storedOperableTrigger : this.keyToTriggerMap.values()) {
-                resumeTriggerInHeap(storedOperableTrigger);
+            for (InternalOperableTrigger internalOperableTrigger : this.keyToTriggerMap.values()) {
+                resumeTriggerInHeap(internalOperableTrigger);
             }
         }
 
@@ -680,12 +710,12 @@ public class IndexJobStateStore<JobType extends com.floragunn.searchsupport.jobs
 
             result = new ArrayList<OperableTrigger>(Math.min(maxCount, this.activeTriggers.size()));
             Set<JobKey> acquiredJobKeysForNoConcurrentExec = new HashSet<JobKey>();
-            Set<StoredOperableTrigger> excludedTriggers = new HashSet<StoredOperableTrigger>();
+            Set<InternalOperableTrigger> excludedTriggers = new HashSet<InternalOperableTrigger>();
             long misfireIsBefore = System.currentTimeMillis() - misfireThreshold;
 
             long batchEnd = noLaterThan;
 
-            for (StoredOperableTrigger trigger = activeTriggers.pollFirst(); trigger != null
+            for (InternalOperableTrigger trigger = activeTriggers.pollFirst(); trigger != null
                     && result.size() < maxCount; trigger = activeTriggers.pollFirst()) {
                 if (trigger.getNextFireTime() == null) {
                     continue;
@@ -704,10 +734,10 @@ public class IndexJobStateStore<JobType extends com.floragunn.searchsupport.jobs
                     break;
                 }
 
-                StoredJobDetail storedJobDetail = keyToJobMap.get(trigger.getJobKey());
+                InternalJobDetail internalJobDetail = keyToJobMap.get(trigger.getJobKey());
 
-                if (storedJobDetail.isConcurrentExectionDisallowed()) {
-                    if (acquiredJobKeysForNoConcurrentExec.contains(storedJobDetail.getKey())) {
+                if (internalJobDetail.isConcurrentExectionDisallowed()) {
+                    if (acquiredJobKeysForNoConcurrentExec.contains(internalJobDetail.getKey())) {
                         excludedTriggers.add(trigger);
                         continue;
                     } else {
@@ -715,9 +745,7 @@ public class IndexJobStateStore<JobType extends com.floragunn.searchsupport.jobs
                     }
                 }
 
-                trigger.state = StoredOperableTrigger.State.ACQUIRED;
-                trigger.node = nodeId;
-                markDirty(trigger);
+                trigger.setStateAndNode(InternalOperableTrigger.State.ACQUIRED, nodeId);
 
                 // tw.trigger.setFireInstanceId(getFiredTriggerRecordId()); TODO
 
@@ -740,28 +768,28 @@ public class IndexJobStateStore<JobType extends com.floragunn.searchsupport.jobs
 
     @Override
     public void releaseAcquiredTrigger(OperableTrigger trigger) {
-        StoredOperableTrigger storedOperableTrigger;
+        InternalOperableTrigger internalOperableTrigger;
 
         synchronized (this) {
-            storedOperableTrigger = this.keyToTriggerMap.get(trigger.getKey());
+            internalOperableTrigger = this.keyToTriggerMap.get(trigger.getKey());
 
-            if (storedOperableTrigger == null) {
+            if (internalOperableTrigger == null) {
                 return;
             }
 
-            if (storedOperableTrigger.state != StoredOperableTrigger.State.ACQUIRED) {
+            if (internalOperableTrigger.state != InternalOperableTrigger.State.ACQUIRED) {
                 return;
             }
 
-            storedOperableTrigger.state = StoredOperableTrigger.State.WAITING;
+            internalOperableTrigger.state = InternalOperableTrigger.State.WAITING;
 
-            activeTriggers.add(storedOperableTrigger);
+            activeTriggers.add(internalOperableTrigger);
 
         }
 
         try {
 
-            setTriggerStatusInIndex(storedOperableTrigger);
+            setTriggerStatusInIndex(internalOperableTrigger);
         } catch (Exception e) {
             // TODO
             throw new RuntimeException(e);
@@ -779,46 +807,34 @@ public class IndexJobStateStore<JobType extends com.floragunn.searchsupport.jobs
         synchronized (this) {
 
             for (OperableTrigger trigger : firedTriggers) {
-                StoredOperableTrigger storedOperableTrigger = toInternal(trigger);
+                InternalOperableTrigger internalOperableTrigger = toInternal(trigger);
 
-                if (storedOperableTrigger == null) {
+                if (internalOperableTrigger == null) {
                     continue;
                 }
 
                 // was the trigger completed, paused, blocked, etc. since being acquired?
-                if (storedOperableTrigger.state != StoredOperableTrigger.State.ACQUIRED) {
+                if (internalOperableTrigger.state != InternalOperableTrigger.State.ACQUIRED) {
                     continue;
                 }
 
                 Date prevFireTime = trigger.getPreviousFireTime();
 
-                activeTriggers.remove(storedOperableTrigger);
-                storedOperableTrigger.triggered(null);
-                storedOperableTrigger.state = StoredOperableTrigger.State.EXECUTING;
-                storedOperableTrigger.node = nodeId;
-                markDirty(storedOperableTrigger);
+                activeTriggers.remove(internalOperableTrigger);
+                internalOperableTrigger.triggered(null);
+                internalOperableTrigger.state = InternalOperableTrigger.State.EXECUTING;
+                internalOperableTrigger.node = nodeId;
+                markDirty(internalOperableTrigger);
 
-                StoredJobDetail jobDetail = this.keyToJobMap.get(trigger.getJobKey());
+                InternalJobDetail jobDetail = this.keyToJobMap.get(trigger.getJobKey());
 
                 TriggerFiredBundle triggerFiredBundle = new TriggerFiredBundle(jobDetail, trigger, null, false, new Date(),
                         trigger.getPreviousFireTime(), prevFireTime, trigger.getNextFireTime());
 
                 if (jobDetail.isConcurrentExectionDisallowed()) {
-                    // TODO verstehen und schöner
-                    for (StoredOperableTrigger ttw : jobDetail.triggers) {
-                        if (ttw.state == StoredOperableTrigger.State.WAITING) {
-                            ttw.state = StoredOperableTrigger.State.BLOCKED;
-                            markDirty(ttw);
-                        } else if (ttw.state == StoredOperableTrigger.State.PAUSED) {
-                            ttw.state = StoredOperableTrigger.State.PAUSED_BLOCKED;
-                            markDirty(ttw);
-                        }
-
-                        this.activeTriggers.remove(ttw);
-                    }
-                    blockedJobs.add(jobDetail.getKey());
-                } else if (storedOperableTrigger.getNextFireTime() != null) {
-                    this.activeTriggers.add(storedOperableTrigger);
+                    jobDetail.blockIdleTriggers();
+                } else if (internalOperableTrigger.getNextFireTime() != null) {
+                    this.activeTriggers.add(internalOperableTrigger);
                 }
 
                 results.add(new TriggerFiredResult(triggerFiredBundle));
@@ -843,51 +859,39 @@ public class IndexJobStateStore<JobType extends com.floragunn.searchsupport.jobs
         }
 
         synchronized (this) {
-            StoredJobDetail storedJobDetail = toInternal(jobDetail);
-            StoredOperableTrigger storedOperableTrigger = toInternal(trigger);
+            InternalJobDetail internalJobDetail = toInternal(jobDetail);
+            InternalOperableTrigger internalOperableTrigger = toInternal(trigger);
 
-            if (storedJobDetail != null) {
-                if (storedJobDetail.isPersistJobDataAfterExecution()) {
+            if (internalJobDetail != null) {
+                if (internalJobDetail.isPersistJobDataAfterExecution()) {
                     JobDataMap newData = jobDetail.getJobDataMap();
                     if (newData != null) {
                         newData = (JobDataMap) newData.clone();
                         newData.clearDirtyFlag();
                     }
                     // TODO persist?!
-                    storedJobDetail.delegate = storedJobDetail.getJobBuilder().setJobData(newData).build();
+                    internalJobDetail.delegate = internalJobDetail.getJobBuilder().setJobData(newData).build();
                 }
 
-                if (storedJobDetail.isConcurrentExectionDisallowed()) {
-                    blockedJobs.remove(storedJobDetail.getKey());
-
-                    for (StoredOperableTrigger ttw : storedJobDetail.triggers) {
-                        if (ttw.state == StoredOperableTrigger.State.BLOCKED) {
-                            ttw.state = StoredOperableTrigger.State.WAITING;
-                            this.activeTriggers.add(ttw);
-                            markDirty(ttw);
-                        } else if (ttw.state == StoredOperableTrigger.State.PAUSED_BLOCKED) {
-                            ttw.state = StoredOperableTrigger.State.PAUSED;
-                            markDirty(ttw);
-                        }
-                    }
+                if (internalJobDetail.isConcurrentExectionDisallowed()) {
+                    internalJobDetail.deblockTriggers();
                     signaler.signalSchedulingChange(0L);
                 }
             } else {
                 blockedJobs.remove(jobDetail.getKey());
             }
 
-            if (storedOperableTrigger != null) {
+            if (internalOperableTrigger != null) {
                 switch (triggerInstCode) {
                 case DELETE_TRIGGER:
                     // TODO sinnvoll bei extern geladener config?
-                    storedOperableTrigger.state = StoredOperableTrigger.State.DELETED;
-                    markDirty(storedOperableTrigger);
+                    internalOperableTrigger.setState(InternalOperableTrigger.State.DELETED);
 
                     if (trigger.getNextFireTime() == null) {
                         // double check for possible reschedule within job 
                         // execution, which would cancel the need to delete...
-                        if (storedOperableTrigger.getNextFireTime() == null) {
-                            removeTrigger(storedOperableTrigger.getKey());
+                        if (internalOperableTrigger.getNextFireTime() == null) {
+                            removeTrigger(internalOperableTrigger.getKey());
                         }
                     } else {
                         removeTrigger(trigger.getKey());
@@ -895,29 +899,26 @@ public class IndexJobStateStore<JobType extends com.floragunn.searchsupport.jobs
                     }
                     break;
                 case SET_TRIGGER_COMPLETE:
-                    storedOperableTrigger.state = StoredOperableTrigger.State.COMPLETE;
-                    this.activeTriggers.remove(storedOperableTrigger);
-                    markDirty(storedOperableTrigger);
+                    internalOperableTrigger.setState(InternalOperableTrigger.State.COMPLETE);
+                    this.activeTriggers.remove(internalOperableTrigger);
                     signaler.signalSchedulingChange(0L);
                     break;
                 case SET_TRIGGER_ERROR:
-                    storedOperableTrigger.state = StoredOperableTrigger.State.ERROR;
-                    this.activeTriggers.remove(storedOperableTrigger);
+                    internalOperableTrigger.setState(InternalOperableTrigger.State.ERROR);
+                    this.activeTriggers.remove(internalOperableTrigger);
                     signaler.signalSchedulingChange(0L);
-                    markDirty(storedOperableTrigger);
                     break;
                 case SET_ALL_JOB_TRIGGERS_ERROR:
-                    setAllTriggersOfJobToState(storedJobDetail, StoredOperableTrigger.State.ERROR);
+                    setAllTriggersOfJobToState(internalJobDetail, InternalOperableTrigger.State.ERROR);
                     signaler.signalSchedulingChange(0L);
                     break;
                 case SET_ALL_JOB_TRIGGERS_COMPLETE:
-                    setAllTriggersOfJobToState(storedJobDetail, StoredOperableTrigger.State.COMPLETE);
+                    setAllTriggersOfJobToState(internalJobDetail, InternalOperableTrigger.State.COMPLETE);
                     signaler.signalSchedulingChange(0L);
                     break;
                 default:
-                    storedOperableTrigger.state = StoredOperableTrigger.State.WAITING;
-                    this.activeTriggers.add(storedOperableTrigger);
-                    markDirty(storedOperableTrigger);
+                    internalOperableTrigger.setState(InternalOperableTrigger.State.WAITING);
+                    this.activeTriggers.add(internalOperableTrigger);
                     break;
                 }
             }
@@ -950,109 +951,110 @@ public class IndexJobStateStore<JobType extends com.floragunn.searchsupport.jobs
         return 20;
     }
 
-    private StoredJobDetail toInternal(JobDetail jobDetail) {
-        if (jobDetail instanceof StoredJobDetail) {
-            return (StoredJobDetail) jobDetail;
+    @SuppressWarnings("unchecked")
+    private InternalJobDetail toInternal(JobDetail jobDetail) {
+        if (jobDetail instanceof IndexJobStateStore.InternalJobDetail) {
+            return (InternalJobDetail) jobDetail;
         } else {
             return this.keyToJobMap.get(jobDetail.getKey());
         }
     }
 
-    private StoredOperableTrigger toInternal(OperableTrigger trigger) {
-        if (trigger instanceof StoredOperableTrigger) {
-            return (StoredOperableTrigger) trigger;
+    private InternalOperableTrigger toInternal(OperableTrigger trigger) {
+        if (trigger instanceof InternalOperableTrigger) {
+            return (InternalOperableTrigger) trigger;
         } else {
             return this.keyToTriggerMap.get(trigger.getKey());
         }
     }
 
-    private synchronized StoredOperableTrigger storeTriggerInHeap(OperableTrigger newTrigger, boolean replaceExisting)
+    private synchronized InternalOperableTrigger storeTriggerInHeap(OperableTrigger newTrigger, boolean replaceExisting)
             throws ObjectAlreadyExistsException, JobPersistenceException {
 
-        StoredJobDetail storedJobDetail = this.keyToJobMap.get(newTrigger.getJobKey());
+        InternalJobDetail internalJobDetail = this.keyToJobMap.get(newTrigger.getJobKey());
 
-        if (storedJobDetail == null) {
+        if (internalJobDetail == null) {
             throw new JobPersistenceException("Trigger " + newTrigger + " references non-existing job" + newTrigger.getJobKey());
         }
 
-        StoredOperableTrigger storedOperableTrigger = new StoredOperableTrigger(newTrigger);
+        InternalOperableTrigger internalOperableTrigger = new InternalOperableTrigger(newTrigger);
 
-        storedJobDetail.addTrigger(storedOperableTrigger);
+        internalJobDetail.addTrigger(internalOperableTrigger);
 
-        addToCollections(storedOperableTrigger);
+        addToCollections(internalOperableTrigger);
 
-        updateTriggerStateToIdle(storedOperableTrigger);
+        updateTriggerStateToIdle(internalOperableTrigger);
 
-        return storedOperableTrigger;
+        return internalOperableTrigger;
     }
 
-    private synchronized void addToCollections(StoredJobDetail storedJobDetail) {
-        keyToJobMap.put(storedJobDetail.getKey(), storedJobDetail);
-        groupAndKeyToJobMap.put(storedJobDetail.getKey().getGroup(), storedJobDetail.getKey(), storedJobDetail);
+    private synchronized void addToCollections(InternalJobDetail internalJobDetail) {
+        keyToJobMap.put(internalJobDetail.getKey(), internalJobDetail);
+        groupAndKeyToJobMap.put(internalJobDetail.getKey().getGroup(), internalJobDetail.getKey(), internalJobDetail);
 
-        if (!storedJobDetail.triggers.isEmpty()) {
-            for (StoredOperableTrigger storedOperableTrigger : storedJobDetail.triggers) {
-                this.addToCollections(storedOperableTrigger);
+        if (!internalJobDetail.triggers.isEmpty()) {
+            for (InternalOperableTrigger internalOperableTrigger : internalJobDetail.triggers) {
+                this.addToCollections(internalOperableTrigger);
             }
         }
     }
 
-    private synchronized void addToCollections(StoredOperableTrigger storedOperableTrigger) {
-        this.groupAndKeyToTriggerMap.put(storedOperableTrigger.getKey().getGroup(), storedOperableTrigger.getKey(), storedOperableTrigger);
-        this.keyToTriggerMap.put(storedOperableTrigger.getKey(), storedOperableTrigger);
+    private synchronized void addToCollections(InternalOperableTrigger internalOperableTrigger) {
+        this.groupAndKeyToTriggerMap.put(internalOperableTrigger.getKey().getGroup(), internalOperableTrigger.getKey(), internalOperableTrigger);
+        this.keyToTriggerMap.put(internalOperableTrigger.getKey(), internalOperableTrigger);
     }
 
     private synchronized void initActiveTriggers() {
         activeTriggers.clear();
 
-        for (StoredOperableTrigger trigger : this.keyToTriggerMap.values()) {
-            if (trigger.state == StoredOperableTrigger.State.WAITING) {
+        for (InternalOperableTrigger trigger : this.keyToTriggerMap.values()) {
+            if (trigger.state == InternalOperableTrigger.State.WAITING) {
                 activeTriggers.add(trigger);
             }
         }
     }
 
-    private boolean updateTriggerStateToIdle(StoredOperableTrigger storedOperableTrigger) {
-        if (pausedTriggerGroups.contains(storedOperableTrigger.getKey().getGroup())
-                || pausedJobGroups.contains(storedOperableTrigger.getJobKey().getGroup())) {
-            if (blockedJobs.contains(storedOperableTrigger.getJobKey())) {
-                storedOperableTrigger.state = StoredOperableTrigger.State.PAUSED_BLOCKED;
+    private boolean updateTriggerStateToIdle(InternalOperableTrigger internalOperableTrigger) {
+        if (pausedTriggerGroups.contains(internalOperableTrigger.getKey().getGroup())
+                || pausedJobGroups.contains(internalOperableTrigger.getJobKey().getGroup())) {
+            if (blockedJobs.contains(internalOperableTrigger.getJobKey())) {
+                internalOperableTrigger.setState(InternalOperableTrigger.State.PAUSED_BLOCKED);
             } else {
-                storedOperableTrigger.state = StoredOperableTrigger.State.PAUSED;
+                internalOperableTrigger.setState(InternalOperableTrigger.State.PAUSED);
             }
             return false;
-        } else if (blockedJobs.contains(storedOperableTrigger.getJobKey())) {
-            storedOperableTrigger.state = StoredOperableTrigger.State.BLOCKED;
+        } else if (blockedJobs.contains(internalOperableTrigger.getJobKey())) {
+            internalOperableTrigger.setState(InternalOperableTrigger.State.BLOCKED);
             return false;
         } else {
-            storedOperableTrigger.state = StoredOperableTrigger.State.WAITING;
+            internalOperableTrigger.setState(InternalOperableTrigger.State.WAITING);
             return true;
         }
     }
 
-    private void setTriggerStatusInIndex(StoredOperableTrigger storedOperableTrigger) throws JobPersistenceException {
+    private void setTriggerStatusInIndex(InternalOperableTrigger internalOperableTrigger) throws JobPersistenceException {
         try {
             XContentBuilder xContentBuilder = XContentFactory.jsonBuilder();
-            storedOperableTrigger.toXContent(xContentBuilder, ToXContent.EMPTY_PARAMS);
+            internalOperableTrigger.toXContent(xContentBuilder, ToXContent.EMPTY_PARAMS);
 
-            IndexRequest indexRequest = new IndexRequest(statusIndexName).id(storedOperableTrigger.getKeyString()).source(xContentBuilder);
+            IndexRequest indexRequest = new IndexRequest(statusIndexName).id(internalOperableTrigger.getKeyString()).source(xContentBuilder);
 
-            // TODO change to async? https://www.elastic.co/guide/en/elasticsearch/client/java-rest/master/java-rest-high-document-index.html
-            IndexResponse indexResponse = this.client.index(indexRequest).get();
-        } catch (IOException | InterruptedException | ExecutionException e) {
+            // TODO how to handle failure
+            this.client.index(indexRequest);
+        } catch (Exception e) {
             throw new JobPersistenceException(e.getMessage(), e);
         }
     }
 
-    private synchronized Collection<StoredOperableTrigger> matchTriggers(GroupMatcher<TriggerKey> matcher) throws JobPersistenceException {
+    private synchronized Collection<InternalOperableTrigger> matchTriggers(GroupMatcher<TriggerKey> matcher) throws JobPersistenceException {
         if (matcher.getCompareWithOperator() == StringMatcher.StringOperatorName.EQUALS) {
             return this.groupAndKeyToTriggerMap.row(matcher.getCompareToValue()).values();
         } else {
-            HashSet<StoredOperableTrigger> result = new HashSet<>();
+            HashSet<InternalOperableTrigger> result = new HashSet<>();
             StringMatcher.StringOperatorName operator = matcher.getCompareWithOperator();
             String matcherValue = matcher.getCompareToValue();
 
-            for (Map.Entry<String, Map<TriggerKey, StoredOperableTrigger>> entry : this.groupAndKeyToTriggerMap.rowMap().entrySet()) {
+            for (Map.Entry<String, Map<TriggerKey, InternalOperableTrigger>> entry : this.groupAndKeyToTriggerMap.rowMap().entrySet()) {
                 if (operator.evaluate(entry.getKey(), matcherValue)) {
                     result.addAll(entry.getValue().values());
                 }
@@ -1062,15 +1064,15 @@ public class IndexJobStateStore<JobType extends com.floragunn.searchsupport.jobs
         }
     }
 
-    private synchronized Collection<StoredJobDetail> matchJobs(GroupMatcher<JobKey> matcher) throws JobPersistenceException {
+    private synchronized Collection<InternalJobDetail> matchJobs(GroupMatcher<JobKey> matcher) throws JobPersistenceException {
         if (matcher.getCompareWithOperator() == StringMatcher.StringOperatorName.EQUALS) {
             return this.groupAndKeyToJobMap.row(matcher.getCompareToValue()).values();
         } else {
-            HashSet<StoredJobDetail> result = new HashSet<>();
+            HashSet<InternalJobDetail> result = new HashSet<>();
             StringMatcher.StringOperatorName operator = matcher.getCompareWithOperator();
             String matcherValue = matcher.getCompareToValue();
 
-            for (Map.Entry<String, Map<JobKey, StoredJobDetail>> entry : this.groupAndKeyToJobMap.rowMap().entrySet()) {
+            for (Map.Entry<String, Map<JobKey, InternalJobDetail>> entry : this.groupAndKeyToJobMap.rowMap().entrySet()) {
                 if (operator.evaluate(entry.getKey(), matcherValue)) {
                     result.addAll(entry.getValue().values());
                 }
@@ -1080,72 +1082,72 @@ public class IndexJobStateStore<JobType extends com.floragunn.searchsupport.jobs
         }
     }
 
-    private synchronized boolean pauseTriggerInHeap(StoredOperableTrigger storedOperableTrigger) {
-        if (storedOperableTrigger == null || storedOperableTrigger.state == StoredOperableTrigger.State.COMPLETE) {
+    private synchronized boolean pauseTriggerInHeap(InternalOperableTrigger internalOperableTrigger) {
+        if (internalOperableTrigger == null || internalOperableTrigger.state == InternalOperableTrigger.State.COMPLETE) {
             return false;
         }
 
-        if (storedOperableTrigger.state == StoredOperableTrigger.State.BLOCKED) {
-            storedOperableTrigger.state = StoredOperableTrigger.State.PAUSED_BLOCKED;
+        if (internalOperableTrigger.state == InternalOperableTrigger.State.BLOCKED) {
+            internalOperableTrigger.state = InternalOperableTrigger.State.PAUSED_BLOCKED;
         } else {
-            storedOperableTrigger.state = StoredOperableTrigger.State.PAUSED;
+            internalOperableTrigger.state = InternalOperableTrigger.State.PAUSED;
         }
 
-        activeTriggers.remove(storedOperableTrigger);
-        markDirty(storedOperableTrigger);
+        activeTriggers.remove(internalOperableTrigger);
+        markDirty(internalOperableTrigger);
 
         return true;
     }
 
-    private synchronized boolean resumeTriggerInHeap(StoredOperableTrigger storedOperableTrigger) {
-        if (storedOperableTrigger == null) {
+    private synchronized boolean resumeTriggerInHeap(InternalOperableTrigger internalOperableTrigger) {
+        if (internalOperableTrigger == null) {
             return false;
         }
 
-        if (storedOperableTrigger.state != StoredOperableTrigger.State.PAUSED
-                && storedOperableTrigger.state != StoredOperableTrigger.State.PAUSED_BLOCKED) {
+        if (internalOperableTrigger.state != InternalOperableTrigger.State.PAUSED
+                && internalOperableTrigger.state != InternalOperableTrigger.State.PAUSED_BLOCKED) {
             return false;
         }
 
-        storedOperableTrigger.state = StoredOperableTrigger.State.WAITING;
+        internalOperableTrigger.state = InternalOperableTrigger.State.WAITING;
 
-        checkForMisfire(storedOperableTrigger);
+        checkForMisfire(internalOperableTrigger);
 
-        if (updateTriggerStateToIdle(storedOperableTrigger)) {
-            activeTriggers.add(storedOperableTrigger);
+        if (updateTriggerStateToIdle(internalOperableTrigger)) {
+            activeTriggers.add(internalOperableTrigger);
         } else {
-            activeTriggers.remove(storedOperableTrigger);
+            activeTriggers.remove(internalOperableTrigger);
         }
 
-        markDirty(storedOperableTrigger);
+        markDirty(internalOperableTrigger);
         return true;
     }
 
-    private synchronized void setAllTriggersOfJobToState(StoredJobDetail storedJobDetail, StoredOperableTrigger.State state) {
+    private synchronized void setAllTriggersOfJobToState(InternalJobDetail internalJobDetail, InternalOperableTrigger.State state) {
 
-        for (StoredOperableTrigger storedOperableTrigger : storedJobDetail.triggers) {
-            if (storedOperableTrigger.state == state) {
+        for (InternalOperableTrigger internalOperableTrigger : internalJobDetail.triggers) {
+            if (internalOperableTrigger.state == state) {
                 continue;
             }
 
-            storedOperableTrigger.state = state;
+            internalOperableTrigger.state = state;
 
-            if (state != StoredOperableTrigger.State.WAITING) {
-                this.activeTriggers.remove(storedOperableTrigger);
+            if (state != InternalOperableTrigger.State.WAITING) {
+                this.activeTriggers.remove(internalOperableTrigger);
             }
 
-            markDirty(storedOperableTrigger);
+            markDirty(internalOperableTrigger);
         }
 
     }
 
     private void initJobs() {
-        Collection<StoredJobDetail> jobs = this.loadJobs();
+        Collection<InternalJobDetail> jobs = this.loadJobs();
 
         synchronized (this) {
             resetJobs();
 
-            for (StoredJobDetail job : jobs) {
+            for (InternalJobDetail job : jobs) {
                 addToCollections(job);
             }
 
@@ -1163,18 +1165,18 @@ public class IndexJobStateStore<JobType extends com.floragunn.searchsupport.jobs
         activeTriggers.clear();
     }
 
-    private Collection<StoredJobDetail> loadJobs() {
+    private Collection<InternalJobDetail> loadJobs() {
         Set<JobType> jobConfigSet = this.loadJobConfig();
 
         if (log.isDebugEnabled()) {
             log.debug("Job configurations loaded: " + jobConfigSet);
         }
 
-        Map<TriggerKey, StoredOperableTrigger> triggerStates = this.loadTriggerStates(jobConfigSet);
-        Collection<StoredJobDetail> result = new ArrayList<>(jobConfigSet.size());
+        Map<TriggerKey, InternalOperableTrigger> triggerStates = this.loadTriggerStates(jobConfigSet);
+        Collection<InternalJobDetail> result = new ArrayList<>(jobConfigSet.size());
 
         for (JobType jobConfig : jobConfigSet) {
-            StoredJobDetail storedJobDetail = new StoredJobDetail(this.jobFactory.createJobDetail(jobConfig));
+            InternalJobDetail internalJobDetail = new InternalJobDetail(this.jobFactory.createJobDetail(jobConfig), this);
 
             for (Trigger triggerConfig : jobConfig.getTriggers()) {
                 if (!(triggerConfig instanceof OperableTrigger)) {
@@ -1183,23 +1185,23 @@ public class IndexJobStateStore<JobType extends com.floragunn.searchsupport.jobs
                 }
 
                 OperableTrigger operableTriggerConfig = (OperableTrigger) triggerConfig;
-                StoredOperableTrigger storedOperableTrigger = triggerStates.get(triggerConfig.getKey());
+                InternalOperableTrigger internalOperableTrigger = triggerStates.get(triggerConfig.getKey());
 
-                if (storedOperableTrigger != null) {
-                    storedOperableTrigger.setDelegate(operableTriggerConfig);
-                    checkTriggerStateAfterRecovery(storedOperableTrigger);
+                if (internalOperableTrigger != null) {
+                    internalOperableTrigger.setDelegate(operableTriggerConfig);
+                    checkTriggerStateAfterRecovery(internalOperableTrigger);
                 } else {
-                    storedOperableTrigger = new StoredOperableTrigger(operableTriggerConfig);
-                    storedOperableTrigger.computeFirstFireTime(null);
-                    storedOperableTrigger.node = this.nodeId;
+                    internalOperableTrigger = new InternalOperableTrigger(operableTriggerConfig);
+                    internalOperableTrigger.computeFirstFireTime(null);
+                    internalOperableTrigger.node = this.nodeId;
 
-                    updateTriggerStateToIdle(storedOperableTrigger);
+                    updateTriggerStateToIdle(internalOperableTrigger);
                 }
 
-                storedJobDetail.addTrigger(storedOperableTrigger);
+                internalJobDetail.addTrigger(internalOperableTrigger);
             }
 
-            result.add(storedJobDetail);
+            result.add(internalJobDetail);
         }
 
         if (log.isInfoEnabled()) {
@@ -1209,30 +1211,30 @@ public class IndexJobStateStore<JobType extends com.floragunn.searchsupport.jobs
         return result;
     }
 
-    private synchronized void checkTriggerStateAfterRecovery(StoredOperableTrigger storedOperableTrigger) {
-        switch (storedOperableTrigger.getState()) {
+    private synchronized void checkTriggerStateAfterRecovery(InternalOperableTrigger internalOperableTrigger) {
+        switch (internalOperableTrigger.getState()) {
         case EXECUTING:
-            if (this.nodeId.equals(storedOperableTrigger.getNode())) {
-                log.info("Trigger " + storedOperableTrigger + " is still executing on local node.");
+            if (this.nodeId.equals(internalOperableTrigger.getNode())) {
+                log.info("Trigger " + internalOperableTrigger + " is still executing on local node.");
             } else {
-                log.info("Trigger " + storedOperableTrigger + " is marked as still executing on node " + storedOperableTrigger.getNode());
+                log.info("Trigger " + internalOperableTrigger + " is marked as still executing on node " + internalOperableTrigger.getNode());
                 // TODO What to do? Ask the other node if it is still executing? Timeout?
             }
             break;
         case ACQUIRED:
         case BLOCKED:
         case WAITING:
-            storedOperableTrigger.computeFirstFireTime(null);
-            storedOperableTrigger.node = this.nodeId;
-            updateTriggerStateToIdle(storedOperableTrigger);
-            // TODO only mark dirty if really necessary
-            this.markDirty(storedOperableTrigger);
+            if (internalOperableTrigger.getNextFireTime() == null) {
+                internalOperableTrigger.computeFirstFireTime(null);
+            }
+            internalOperableTrigger.node = this.nodeId;
+            updateTriggerStateToIdle(internalOperableTrigger);
             break;
         case PAUSED_BLOCKED:
-            storedOperableTrigger.computeFirstFireTime(null);
-            storedOperableTrigger.node = this.nodeId;
-            storedOperableTrigger.setState(StoredOperableTrigger.State.PAUSED);
-            this.markDirty(storedOperableTrigger);
+            if (internalOperableTrigger.getNextFireTime() == null) {
+                internalOperableTrigger.computeFirstFireTime(null);
+            }
+            internalOperableTrigger.setStateAndNode(InternalOperableTrigger.State.PAUSED, this.nodeId);
             break;
         default:
             // No change needed
@@ -1240,7 +1242,7 @@ public class IndexJobStateStore<JobType extends com.floragunn.searchsupport.jobs
         }
     }
 
-    private Map<TriggerKey, StoredOperableTrigger> loadTriggerStates(Set<JobType> jobConfig) {
+    private Map<TriggerKey, InternalOperableTrigger> loadTriggerStates(Set<JobType> jobConfig) {
         try {
             Map<String, TriggerKey> triggerIds = this.getTriggerIds(jobConfig);
 
@@ -1248,7 +1250,7 @@ public class IndexJobStateStore<JobType extends com.floragunn.searchsupport.jobs
                 return Collections.emptyMap();
             }
 
-            Map<TriggerKey, StoredOperableTrigger> result = new HashMap<>(triggerIds.size());
+            Map<TriggerKey, InternalOperableTrigger> result = new HashMap<>(triggerIds.size());
 
             QueryBuilder queryBuilder = QueryBuilders.idsQuery().addIds(triggerIds.keySet().toArray(new String[triggerIds.size()]));
 
@@ -1258,9 +1260,10 @@ public class IndexJobStateStore<JobType extends com.floragunn.searchsupport.jobs
                 try {
                     TriggerKey triggerKey = triggerIds.get(searchHit.getId());
 
-                    StoredOperableTrigger storedOperableTrigger = StoredOperableTrigger.fromAttributeMap(triggerKey, searchHit.getSourceAsMap());
+                    InternalOperableTrigger internalOperableTrigger = InternalOperableTrigger.fromAttributeMap(triggerKey,
+                            searchHit.getSourceAsMap());
 
-                    result.put(triggerKey, storedOperableTrigger);
+                    result.put(triggerKey, internalOperableTrigger);
 
                 } catch (Exception e) {
                     log.error("Error while loading " + searchHit, e);
@@ -1296,46 +1299,46 @@ public class IndexJobStateStore<JobType extends com.floragunn.searchsupport.jobs
                 + key.getName().replaceAll("\\\\", "\\\\").replaceAll("\\.", "\\.");
     }
 
-    private boolean checkForMisfire(StoredOperableTrigger storedOperableTrigger) {
-        return checkForMisfire(storedOperableTrigger, System.currentTimeMillis() - misfireThreshold);
+    private boolean checkForMisfire(InternalOperableTrigger internalOperableTrigger) {
+        return checkForMisfire(internalOperableTrigger, System.currentTimeMillis() - misfireThreshold);
     }
 
-    private boolean checkForMisfire(StoredOperableTrigger storedOperableTrigger, long isMisfireBefore) {
+    private boolean checkForMisfire(InternalOperableTrigger internalOperableTrigger, long isMisfireBefore) {
 
-        Date nextFireTime = storedOperableTrigger.getNextFireTime();
+        Date nextFireTime = internalOperableTrigger.getNextFireTime();
 
         if (nextFireTime == null || nextFireTime.getTime() > isMisfireBefore
-                || storedOperableTrigger.getMisfireInstruction() == Trigger.MISFIRE_INSTRUCTION_IGNORE_MISFIRE_POLICY) {
+                || internalOperableTrigger.getMisfireInstruction() == Trigger.MISFIRE_INSTRUCTION_IGNORE_MISFIRE_POLICY) {
             return false;
         }
 
         Calendar calendar = null;
-        if (storedOperableTrigger.getCalendarName() != null) {
-            calendar = retrieveCalendar(storedOperableTrigger.getCalendarName());
+        if (internalOperableTrigger.getCalendarName() != null) {
+            calendar = retrieveCalendar(internalOperableTrigger.getCalendarName());
         }
 
-        signaler.notifyTriggerListenersMisfired((OperableTrigger) storedOperableTrigger.getDelegate().clone());
+        signaler.notifyTriggerListenersMisfired((OperableTrigger) internalOperableTrigger.getDelegate().clone());
 
-        storedOperableTrigger.updateAfterMisfire(calendar);
+        internalOperableTrigger.updateAfterMisfire(calendar);
 
-        this.markDirty(storedOperableTrigger);
+        this.markDirty(internalOperableTrigger);
 
-        if (storedOperableTrigger.getNextFireTime() == null) {
+        if (internalOperableTrigger.getNextFireTime() == null) {
             synchronized (this) {
-                storedOperableTrigger.state = StoredOperableTrigger.State.COMPLETE;
-                this.activeTriggers.remove(storedOperableTrigger);
+                internalOperableTrigger.state = InternalOperableTrigger.State.COMPLETE;
+                this.activeTriggers.remove(internalOperableTrigger);
             }
-            signaler.notifySchedulerListenersFinalized(storedOperableTrigger);
+            signaler.notifySchedulerListenersFinalized(internalOperableTrigger);
             return true;
 
-        } else if (nextFireTime.equals(storedOperableTrigger.getNextFireTime())) {
+        } else if (nextFireTime.equals(internalOperableTrigger.getNextFireTime())) {
             return false;
         } else {
             return true;
         }
     }
 
-    private void markDirty(StoredOperableTrigger trigger) {
+    private void markDirty(InternalOperableTrigger trigger) {
         this.dirtyTriggers.get().add(trigger);
     }
 
@@ -1343,29 +1346,31 @@ public class IndexJobStateStore<JobType extends com.floragunn.searchsupport.jobs
         for (OperableTrigger trigger : this.dirtyTriggers.get()) {
             // TODO batch
             try {
-                setTriggerStatusInIndex((StoredOperableTrigger) trigger);
+                setTriggerStatusInIndex((InternalOperableTrigger) trigger);
             } catch (Exception e) {
-                // TODO handle
-                e.printStackTrace();
+                log.error("error while flushing triggers", e);
             }
         }
 
         this.dirtyTriggers.get().clear();
     }
 
-    static class StoredJobDetail implements JobDetail {
+    static class InternalJobDetail implements JobDetail {
 
         private static final long serialVersionUID = -4500332272991179774L;
 
         private JobDetail delegate;
-        private List<StoredOperableTrigger> triggers = new ArrayList<>();
+        private final IndexJobStateStore<?> jobStore;
+        private List<InternalOperableTrigger> triggers = new ArrayList<>();
 
-        StoredJobDetail(JobDetail jobDetail) {
+        InternalJobDetail(JobDetail jobDetail, IndexJobStateStore<?> jobStore) {
             this.delegate = jobDetail;
+            this.jobStore = jobStore;
         }
 
-        public void addTrigger(StoredOperableTrigger trigger) {
+        public void addTrigger(InternalOperableTrigger trigger) {
             this.triggers.add(trigger);
+            trigger.setJobDetail(this);
         }
 
         public JobKey getKey() {
@@ -1406,7 +1411,7 @@ public class IndexJobStateStore<JobType extends com.floragunn.searchsupport.jobs
 
         @Override
         public Object clone() {
-            return new StoredJobDetail(this.delegate);
+            return new InternalJobDetail(this.delegate, this.jobStore);
         }
 
         @Override
@@ -1439,15 +1444,39 @@ public class IndexJobStateStore<JobType extends com.floragunn.searchsupport.jobs
 
         @Override
         public String toString() {
-            return "StoredJobDetail [getKey()=" + getKey() + ", getDescription()=" + getDescription() + ", getJobClass()=" + getJobClass()
-                    + ", getJobDataMap()=" + getJobDataMap() + ", isDurable()=" + isDurable() + ", isPersistJobDataAfterExecution()="
-                    + isPersistJobDataAfterExecution() + ", isConcurrentExectionDisallowed()=" + isConcurrentExectionDisallowed()
-                    + ", requestsRecovery()=" + requestsRecovery() + "]";
+            return "InternalJobDetail [key=" + getKey() + ", class=" + getJobClass() + ", jobDataMap=" + new HashMap<>(getJobDataMap())
+                    + ", triggers=" + triggers + "]";
         }
 
+        void blockIdleTriggers() {
+            for (InternalOperableTrigger trigger : triggers) {
+                if (trigger.state == InternalOperableTrigger.State.WAITING) {
+                    trigger.setState(InternalOperableTrigger.State.BLOCKED);
+                } else if (trigger.state == InternalOperableTrigger.State.PAUSED) {
+                    trigger.setState(InternalOperableTrigger.State.PAUSED_BLOCKED);
+                }
+
+                this.jobStore.activeTriggers.remove(trigger);
+            }
+
+            this.jobStore.blockedJobs.add(getKey());
+        }
+
+        void deblockTriggers() {
+            this.jobStore.blockedJobs.remove(getKey());
+
+            for (InternalOperableTrigger trigger : triggers) {
+                if (trigger.state == InternalOperableTrigger.State.BLOCKED) {
+                    trigger.setState(InternalOperableTrigger.State.WAITING);
+                    this.jobStore.activeTriggers.add(trigger);
+                } else if (trigger.state == InternalOperableTrigger.State.PAUSED_BLOCKED) {
+                    trigger.setState(InternalOperableTrigger.State.PAUSED);
+                }
+            }
+        }
     }
 
-    static class StoredOperableTrigger implements OperableTrigger, ToXContentObject {
+    static class InternalOperableTrigger implements OperableTrigger, ToXContentObject {
         private static final long serialVersionUID = -181071146931763579L;
         private OperableTrigger delegate;
         private final TriggerKey key;
@@ -1458,13 +1487,14 @@ public class IndexJobStateStore<JobType extends com.floragunn.searchsupport.jobs
         private Date previousFireTime;
         private Date nextFireTime;
         private Integer timesTriggered;
+        private InternalJobDetail jobDetail;
 
-        StoredOperableTrigger(TriggerKey key) {
+        InternalOperableTrigger(TriggerKey key) {
             this.key = key;
             this.keyString = quartzKeyToKeyString(key);
         }
 
-        StoredOperableTrigger(OperableTrigger operableTrigger) {
+        InternalOperableTrigger(OperableTrigger operableTrigger) {
             this(operableTrigger.getKey());
             this.delegate = operableTrigger;
         }
@@ -1530,7 +1560,7 @@ public class IndexJobStateStore<JobType extends com.floragunn.searchsupport.jobs
         }
 
         public Object clone() {
-            return new StoredOperableTrigger(delegate);
+            return new InternalOperableTrigger(delegate);
         }
 
         public void setFireInstanceId(String id) {
@@ -1661,11 +1691,32 @@ public class IndexJobStateStore<JobType extends com.floragunn.searchsupport.jobs
         }
 
         public void setState(State state) {
+            if (this.state == state) {
+                return;
+            }
+
             this.state = state;
+            markDirty();
+        }
+
+        public void setStateAndNode(State state, String nodeId) {
+            if (this.state == state && Objects.equal(this.node, nodeId)) {
+                return;
+            }
+
+            this.state = state;
+            this.node = nodeId;
+            markDirty();
         }
 
         public String toString() {
             return key + " " + state + " " + this.getPreviousFireTime() + " <-> " + this.getNextFireTime();
+        }
+
+        void markDirty() {
+            if (this.jobDetail != null) {
+                this.jobDetail.jobStore.markDirty(this);
+            }
         }
 
         static enum State {
@@ -1698,8 +1749,8 @@ public class IndexJobStateStore<JobType extends com.floragunn.searchsupport.jobs
             return builder;
         }
 
-        public static StoredOperableTrigger fromAttributeMap(TriggerKey triggerKey, Map<String, Object> attributeMap) {
-            StoredOperableTrigger result = new StoredOperableTrigger(triggerKey);
+        public static InternalOperableTrigger fromAttributeMap(TriggerKey triggerKey, Map<String, Object> attributeMap) {
+            InternalOperableTrigger result = new InternalOperableTrigger(triggerKey);
 
             try {
                 result.state = State.valueOf((String) attributeMap.get("state"));
@@ -1769,6 +1820,43 @@ public class IndexJobStateStore<JobType extends com.floragunn.searchsupport.jobs
             }
         }
 
+        public InternalJobDetail getJobDetail() {
+            return jobDetail;
+        }
+
+        public void setJobDetail(InternalJobDetail jobDetail) {
+            this.jobDetail = jobDetail;
+        }
+
     }
 
+    class UpdateListener implements IndexingOperationListener {
+
+        @Override
+        public void postIndex(ShardId shardId, Index index, IndexResult result) {
+            if (!isForConfiguredIndex(shardId)) {
+                return;
+            }
+
+            if (result.getResultType() != Result.Type.SUCCESS) {
+                return;
+            }
+        }
+
+        @Override
+        public void postDelete(ShardId shardId, Delete delete, DeleteResult result) {
+            if (!isForConfiguredIndex(shardId)) {
+                return;
+            }
+
+            if (result.getResultType() != Result.Type.SUCCESS) {
+                return;
+            }
+
+        }
+
+        private boolean isForConfiguredIndex(ShardId shardId) {
+            return IndexJobStateStore.this.indexName.equals(shardId.getIndexName());
+        }
+    }
 }

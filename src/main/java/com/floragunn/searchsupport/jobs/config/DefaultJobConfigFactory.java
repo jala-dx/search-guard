@@ -38,8 +38,13 @@ public class DefaultJobConfigFactory implements JobConfigFactory<DefaultJobConfi
 
     @Override
     public DefaultJobConfig createFromBytes(String id, BytesReference source) throws ParseException {
-        DefaultJobConfig result = new DefaultJobConfig(jobClass);
         ReadContext ctx = JsonPath.using(JSON_PATH_CONFIG).parse(source.utf8ToString());
+
+        return createFromReadContext(id, ctx);
+    }
+
+    protected DefaultJobConfig createFromReadContext(String id, ReadContext ctx) throws ParseException {
+        DefaultJobConfig result = createObject();
 
         JobKey jobKey = new JobKey(id, group);
         result.setJobKey(jobKey);
@@ -72,6 +77,10 @@ public class DefaultJobConfigFactory implements JobConfigFactory<DefaultJobConfi
         result.setTriggers(triggers);
 
         return result;
+    }
+
+    protected DefaultJobConfig createObject() {
+        return new DefaultJobConfig(jobClass);
     }
 
     private void initCronScheduleTriggers(JobKey jobKey, Object scheduleTriggers, ArrayList<Trigger> triggers) throws ParseException {

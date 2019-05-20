@@ -1,10 +1,6 @@
 package com.floragunn.searchsupport.jobs.cluster;
 
 import java.util.Arrays;
-import java.util.Collections;
-import java.util.HashSet;
-import java.util.Set;
-import java.util.function.Supplier;
 
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
@@ -22,16 +18,23 @@ public class JobDistributor implements AutoCloseable {
     private final String nodeFilter;
     private final String[] nodeFilterElements;
     private final ClusterService clusterService;
+    private final NodeComparator<?> nodeComparator;
     private DistributedJobStore distributedJobStore;
     private int availableNodes = 0;
     private int currentNodeIndex = -1;
 
     public JobDistributor(String name, String nodeFilter, ClusterService clusterService, DistributedJobStore distributedJobStore) {
+        this(name, nodeFilter, clusterService, distributedJobStore, new NodeIdComparator(clusterService));
+    }
+
+    public JobDistributor(String name, String nodeFilter, ClusterService clusterService, DistributedJobStore distributedJobStore,
+            NodeComparator<?> nodeComparator) {
         this.name = name;
         this.nodeFilter = nodeFilter;
         this.nodeFilterElements = nodeFilter != null ? nodeFilter.split(",") : null;
         this.clusterService = clusterService;
         this.distributedJobStore = distributedJobStore;
+        this.nodeComparator = nodeComparator;
 
         init();
     }
@@ -68,7 +71,7 @@ public class JobDistributor implements AutoCloseable {
     private boolean update(ClusterState clusterState) {
         int oldAvailableNodes = this.availableNodes;
         int oldCurrentNodeIndex = this.currentNodeIndex;
-        String[] availableNodeIds = getAvailableNodeIds(clusterState);
+        Object[] availableNodeIds = getAvailableNodeIds(clusterState);
 
         if (log.isDebugEnabled()) {
             log.debug("Update of " + this + " on " + clusterState.nodes().getLocalNodeId() + ": " + Arrays.asList(availableNodeIds));
@@ -80,7 +83,7 @@ public class JobDistributor implements AutoCloseable {
             log.error("No nodes available for " + this + "\nnodeFilter: " + nodeFilter);
             this.currentNodeIndex = -1;
         } else {
-            this.currentNodeIndex = Arrays.binarySearch(availableNodeIds, clusterState.nodes().getLocalNodeId());
+            this.currentNodeIndex = Arrays.binarySearch(availableNodeIds, this.nodeComparator.resolveNodeId(clusterState.nodes().getLocalNodeId()));
         }
 
         if (oldAvailableNodes == this.availableNodes && oldCurrentNodeIndex == this.currentNodeIndex) {
@@ -102,8 +105,8 @@ public class JobDistributor implements AutoCloseable {
         return true;
     }
 
-    private String[] getAvailableNodeIds(ClusterState clusterState) {
-        String[] nodeIds = clusterState.nodes().resolveNodes(this.nodeFilterElements);
+    private Object[] getAvailableNodeIds(ClusterState clusterState) {
+        Object[] nodeIds = this.nodeComparator.resolveNodeFilters(this.nodeFilterElements);
 
         Arrays.sort(nodeIds);
 
