@@ -89,6 +89,8 @@ public class DefaultJobConfigFactory implements JobConfigFactory<DefaultJobConfi
         } else if (scheduleTriggers instanceof List) {
             int index = 0;
 
+            // TODO think about consequences when index and thus the key changes
+
             for (Object trigger : ((List<?>) scheduleTriggers)) {
                 triggers.add(createCronTrigger(jobKey, String.valueOf(index), String.valueOf(trigger)));
 

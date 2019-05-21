@@ -44,6 +44,10 @@ public class JobDistributor implements AutoCloseable {
     }
 
     public boolean isJobSelected(JobConfig jobConfig, int nodeIndex) {
+        if (this.availableNodes == 0) {
+            return false;
+        }
+
         int jobNodeIndex = Math.abs(jobConfig.hashCode()) % this.availableNodes;
 
         if (jobNodeIndex == nodeIndex) {
@@ -83,7 +87,8 @@ public class JobDistributor implements AutoCloseable {
             log.error("No nodes available for " + this + "\nnodeFilter: " + nodeFilter);
             this.currentNodeIndex = -1;
         } else {
-            this.currentNodeIndex = Arrays.binarySearch(availableNodeIds, this.nodeComparator.resolveNodeId(clusterState.nodes().getLocalNodeId()));
+            this.currentNodeIndex = Math
+                    .max(Arrays.binarySearch(availableNodeIds, this.nodeComparator.resolveNodeId(clusterState.nodes().getLocalNodeId())), -1);
         }
 
         if (oldAvailableNodes == this.availableNodes && oldCurrentNodeIndex == this.currentNodeIndex) {

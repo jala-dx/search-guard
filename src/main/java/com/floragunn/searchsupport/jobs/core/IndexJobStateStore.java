@@ -12,13 +12,17 @@ import java.util.Map;
 import java.util.Map.Entry;
 import java.util.Set;
 import java.util.TreeSet;
-import java.util.concurrent.ExecutionException;
+import java.util.concurrent.Executor;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.LinkedBlockingQueue;
+import java.util.concurrent.ThreadPoolExecutor;
+import java.util.concurrent.TimeUnit;
 import java.util.stream.Collectors;
 
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 import org.elasticsearch.action.index.IndexRequest;
-import org.elasticsearch.action.index.IndexResponse;
 import org.elasticsearch.action.search.SearchResponse;
 import org.elasticsearch.client.Client;
 import org.elasticsearch.common.xcontent.ToXContent;
@@ -70,6 +74,7 @@ import org.quartz.spi.TriggerFiredResult;
 import com.floragunn.searchsupport.jobs.cluster.DistributedJobStore;
 import com.floragunn.searchsupport.jobs.config.JobConfig;
 import com.floragunn.searchsupport.jobs.config.JobConfigFactory;
+import com.floragunn.searchsupport.util.SingleElementBlockingQueue;
 import com.google.common.base.Objects;
 import com.google.common.collect.HashBasedTable;
 import com.google.common.collect.Sets;
@@ -100,6 +105,8 @@ public class IndexJobStateStore<JobType extends com.floragunn.searchsupport.jobs
     private volatile boolean shutdown = false;
     private long misfireThreshold = 5000l;
     private ThreadLocal<Set<InternalOperableTrigger>> dirtyTriggers = ThreadLocal.withInitial(() -> new HashSet<>());
+    private final ExecutorService configChangeExecutor = new ThreadPoolExecutor(1, 1, 0L, TimeUnit.MILLISECONDS,
+            new SingleElementBlockingQueue<Runnable>());
 
     public IndexJobStateStore(String indexName, String nodeId, Client client, Iterable<JobType> jobConfigSource,
             JobConfigFactory<JobType> jobFactory) {
@@ -119,27 +126,7 @@ public class IndexJobStateStore<JobType extends com.floragunn.searchsupport.jobs
 
         // TODO sync with scheduler
 
-        new Thread() {
-            public void run() {
-                try {
-                    log.info("Reinitializing jobs for " + IndexJobStateStore.this);
-                    initJobs();
-                    signaler.signalSchedulingChange(0L);
-                } catch (Exception e) {
-                    try {
-                        // Let a potential cluster shutdown catch up
-                        Thread.sleep(500);
-                    } catch (InterruptedException e1) {
-                        log.debug(e1);
-                    }
-                    if (!shutdown) {
-                        log.error("Error while initializing jobs for " + IndexJobStateStore.this, e);
-                        // TODO retry?
-                    }
-                }
-            }
-        }.start();
-
+        configChangeExecutor.submit(() -> updateAfterClusterConfigChange());
     }
 
     @Override
@@ -168,6 +155,7 @@ public class IndexJobStateStore<JobType extends com.floragunn.searchsupport.jobs
         if (!shutdown) {
             log.info("Shutdown of " + this);
             shutdown = true;
+            configChangeExecutor.shutdownNow();
         }
     }
 
@@ -1155,6 +1143,25 @@ public class IndexJobStateStore<JobType extends com.floragunn.searchsupport.jobs
         }
 
         flushDirtyTriggersToIndex();
+    }
+
+    private void updateAfterClusterConfigChange() {
+        try {
+            log.info("Reinitializing jobs for " + IndexJobStateStore.this);
+            initJobs();
+            signaler.signalSchedulingChange(0L);
+        } catch (Exception e) {
+            try {
+                // Let a potential cluster shutdown catch up
+                Thread.sleep(500);
+            } catch (InterruptedException e1) {
+                log.debug(e1);
+            }
+            if (!shutdown) {
+                log.error("Error while initializing jobs for " + IndexJobStateStore.this, e);
+                // TODO retry?
+            }
+        }
     }
 
     private synchronized void resetJobs() {
