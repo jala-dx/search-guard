@@ -89,8 +89,10 @@ public class SingleElementBlockingQueue<E> implements BlockingQueue<E> {
         E e = element.get();
 
         int size = e != null ? 1 : 0;
-        if (a.length < size)
+
+        if (a.length < size) {
             a = (T[]) java.lang.reflect.Array.newInstance(a.getClass().getComponentType(), size);
+        }
 
         if (e != null) {
             a[0] = (T) e;
