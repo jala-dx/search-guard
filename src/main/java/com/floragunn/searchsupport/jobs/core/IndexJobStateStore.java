@@ -12,10 +12,7 @@ import java.util.Map;
 import java.util.Map.Entry;
 import java.util.Set;
 import java.util.TreeSet;
-import java.util.concurrent.Executor;
 import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
-import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
 import java.util.stream.Collectors;
@@ -101,7 +98,6 @@ public class IndexJobStateStore<JobType extends com.floragunn.searchsupport.jobs
     private final Set<JobKey> blockedJobs = new HashSet<JobKey>();
     private final Iterable<JobType> jobConfigSource;
     private final JobConfigFactory<JobType> jobFactory;
-    private boolean schedulerRunning = false;
     private volatile boolean shutdown = false;
     private long misfireThreshold = 5000l;
     private ThreadLocal<Set<InternalOperableTrigger>> dirtyTriggers = ThreadLocal.withInitial(() -> new HashSet<>());
@@ -124,7 +120,7 @@ public class IndexJobStateStore<JobType extends com.floragunn.searchsupport.jobs
             return;
         }
 
-        // TODO sync with scheduler
+        resetJobs();
 
         configChangeExecutor.submit(() -> updateAfterClusterConfigChange());
     }
@@ -137,17 +133,14 @@ public class IndexJobStateStore<JobType extends com.floragunn.searchsupport.jobs
 
     @Override
     public void schedulerStarted() throws SchedulerException {
-        schedulerRunning = true;
     }
 
     @Override
     public void schedulerPaused() {
-        schedulerRunning = false;
     }
 
     @Override
     public void schedulerResumed() {
-        schedulerRunning = true;
     }
 
     @Override
@@ -166,13 +159,12 @@ public class IndexJobStateStore<JobType extends com.floragunn.searchsupport.jobs
 
     @Override
     public long getEstimatedTimeToReleaseAndAcquireTrigger() {
-        return 50;
+        return 10;
     }
 
     @Override
     public boolean isClustered() {
-        // TODO Auto-generated method stub
-        return false;
+        return true;
     }
 
     @Override
@@ -604,9 +596,8 @@ public class IndexJobStateStore<JobType extends com.floragunn.searchsupport.jobs
     }
 
     @Override
-    public Set<String> getPausedTriggerGroups() throws JobPersistenceException {
-        // TODO Auto-generated method stub
-        return null;
+    public synchronized Set<String> getPausedTriggerGroups() throws JobPersistenceException {
+        return Collections.unmodifiableSet(new HashSet<>(pausedTriggerGroups));
     }
 
     @Override
@@ -801,7 +792,6 @@ public class IndexJobStateStore<JobType extends com.floragunn.searchsupport.jobs
                     continue;
                 }
 
-                // was the trigger completed, paused, blocked, etc. since being acquired?
                 if (internalOperableTrigger.state != InternalOperableTrigger.State.ACQUIRED) {
                     continue;
                 }
@@ -846,6 +836,8 @@ public class IndexJobStateStore<JobType extends com.floragunn.searchsupport.jobs
             log.debug("triggeredJobComplete(" + trigger + ")");
         }
 
+        // TODO make sure instances are not swapped out due to a reload
+        
         synchronized (this) {
             InternalJobDetail internalJobDetail = toInternal(jobDetail);
             InternalOperableTrigger internalOperableTrigger = toInternal(trigger);
@@ -906,7 +898,10 @@ public class IndexJobStateStore<JobType extends com.floragunn.searchsupport.jobs
                     break;
                 default:
                     internalOperableTrigger.setState(InternalOperableTrigger.State.WAITING);
-                    this.activeTriggers.add(internalOperableTrigger);
+                    if (this.keyToJobMap.containsKey(internalOperableTrigger.getJobKey())) {
+                        // Only add to activeTriggers if this scheduler still "knows" this job. Otherwise, it might have been moved to another node
+                        this.activeTriggers.add(internalOperableTrigger);
+                    }
                     break;
                 }
             }
@@ -918,19 +913,16 @@ public class IndexJobStateStore<JobType extends com.floragunn.searchsupport.jobs
 
     @Override
     public void setInstanceId(String schedInstId) {
-        // TODO Auto-generated method stub
 
     }
 
     @Override
     public void setInstanceName(String schedName) {
-        // TODO Auto-generated method stub
 
     }
 
     @Override
     public void setThreadPoolSize(int poolSize) {
-        // TODO Auto-generated method stub
 
     }
 
@@ -939,7 +931,6 @@ public class IndexJobStateStore<JobType extends com.floragunn.searchsupport.jobs
         return 20;
     }
 
-    @SuppressWarnings("unchecked")
     private InternalJobDetail toInternal(JobDetail jobDetail) {
         if (jobDetail instanceof IndexJobStateStore.InternalJobDetail) {
             return (InternalJobDetail) jobDetail;
@@ -1225,6 +1216,7 @@ public class IndexJobStateStore<JobType extends com.floragunn.searchsupport.jobs
                 log.info("Trigger " + internalOperableTrigger + " is still executing on local node.");
             } else {
                 log.info("Trigger " + internalOperableTrigger + " is marked as still executing on node " + internalOperableTrigger.getNode());
+                
                 // TODO What to do? Ask the other node if it is still executing? Timeout?
             }
             break;
