@@ -28,6 +28,9 @@ import com.floragunn.searchguard.user.User;
 
 public abstract class ConfigModel {
     
+    public Map<String, Set<String>> mapTenantPermissions(User user, Set<String> roles) {
+        throw new UnsupportedOperationException("Kiabana RBAC only supported for Elasticsearch >= 7");
+    }
     public abstract Map<String, Boolean> mapTenants(User user, Set<String> roles);
     public abstract Set<String> mapSgRoles(User user, TransportAddress caller);
     public abstract SgRoles getSgRoles();

@@ -18,7 +18,9 @@
 package com.floragunn.searchguard.privileges;
 
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.Collections;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Iterator;
 import java.util.List;
@@ -587,6 +589,47 @@ public class PrivilegesEvaluator implements DCFListener {
         }
 
         return Collections.unmodifiableList(ret);
+    }
+
+    public Map<String, Boolean> evaluateKibanaApplicationPrivileges(User user, TransportAddress caller, Collection<String> privileges) {
+        
+        if(privileges == null || privileges.isEmpty() || user == null) {
+            log.debug(()-> "Privileges or user empty");
+            return Collections.emptyMap();
+        }
+        
+        final Set<String> mappedRoles = mapSgRoles(user, caller);
+        final Map<String, Set<String>> tenantsPerms = this.configModel.mapTenantPermissions(user, mappedRoles);
+
+        final String requestedTenant = user.getRequestedTenant();
+        
+        if(requestedTenant != null && multitenancyEnabled()) {
+            //non-global tenant
+            log.debug(()-> "Non global tenant: "+requestedTenant);
+            return evaluateTenantPrivileges(tenantsPerms.get(requestedTenant.equals(User.USER_TENANT)?user.getName():requestedTenant), privileges);
+        } else {
+            //global tenant or no mt enabled
+            log.debug(()-> "Global tenant");
+            return evaluateTenantPrivileges(tenantsPerms.get("SGS_GLOBAL_TENANT"), privileges);
+        }
+    }
+    
+    private Map<String, Boolean> evaluateTenantPrivileges(Set<String> privilegesGranted, Collection<String> privilegesAskedFor) {
+        log.debug(()-> "Check "+privilegesGranted+" against "+privilegesAskedFor);
+        final Map<String, Boolean> result = new HashMap<>();
+        for(String privilegeAskedFor: privilegesAskedFor) {
+            
+            if(privilegesGranted == null || privilegesGranted.isEmpty()) {
+                result.put(privilegeAskedFor, false);
+            } else {
+                result.put(privilegeAskedFor, WildcardMatcher.matchAny(privilegesGranted, privilegeAskedFor));
+            }
+        }
+        return Collections.unmodifiableMap(result);
+    }
+
+    public boolean isKibanaRbacEnabled() {
+        return dcm.isKibanaRbacEnabled();
     }
 
 }
