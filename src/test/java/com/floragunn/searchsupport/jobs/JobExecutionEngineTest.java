@@ -46,7 +46,7 @@ public class JobExecutionEngineTest extends SingleClusterTest {
                 ClusterService clusterService = node.injector().getInstance(ClusterService.class);
 
                 Scheduler scheduler = new SchedulerBuilder<DefaultJobConfig>().client(tc).name("test_" + clusterService.getNodeName())
-                        .configIndex("testjobconfig").jobFactory(new ConstantHashJobConfig.Factory(LoggingTestJob.class)).distributed(clusterService)
+                        .configIndex("testjobconfig").jobConfigFactory(new ConstantHashJobConfig.Factory(LoggingTestJob.class)).distributed(clusterService)
                         .nodeComparator(new NodeNameComparator(clusterService)).build();
 
                 scheduler.start();
@@ -80,7 +80,7 @@ public class JobExecutionEngineTest extends SingleClusterTest {
                 ClusterService clusterService = node.injector().getInstance(ClusterService.class);
 
                 Scheduler scheduler = new SchedulerBuilder<DefaultJobConfig>().client(tc).name("test_" + clusterService.getNodeName())
-                        .configIndex("testjobconfig").jobFactory(new ConstantHashJobConfig.Factory(TestJob.class)).distributed(clusterService)
+                        .configIndex("testjobconfig").jobConfigFactory(new ConstantHashJobConfig.Factory(TestJob.class)).distributed(clusterService)
                         .nodeComparator(new NodeNameComparator(clusterService)).build();
 
                 scheduler.start();
@@ -114,7 +114,7 @@ public class JobExecutionEngineTest extends SingleClusterTest {
                 ClusterService clusterService = node.injector().getInstance(ClusterService.class);
 
                 Scheduler scheduler = new SchedulerBuilder<DefaultJobConfig>().client(tc).name("test_" + clusterService.getNodeName())
-                        .configIndex("testjobconfig").jobFactory(new ConstantHashJobConfig.Factory(NonConcurrentTestJob.class))
+                        .configIndex("testjobconfig").jobConfigFactory(new ConstantHashJobConfig.Factory(NonConcurrentTestJob.class))
                         .distributed(clusterService).nodeComparator(new NodeNameComparator(clusterService)).build();
 
                 scheduler.start();
@@ -150,7 +150,7 @@ public class JobExecutionEngineTest extends SingleClusterTest {
                 ClusterService clusterService = node.injector().getInstance(ClusterService.class);
 
                 Scheduler scheduler = new SchedulerBuilder<DefaultJobConfig>().client(tc).name("test_" + clusterService.getNodeName())
-                        .nodeFilter("node_group_1:a").configIndex("testjobconfig").jobFactory(new ConstantHashJobConfig.Factory(TestJob.class))
+                        .nodeFilter("node_group_1:a").configIndex("testjobconfig").jobConfigFactory(new ConstantHashJobConfig.Factory(TestJob.class))
                         .distributed(clusterService).nodeComparator(new NodeNameComparator(clusterService)).build();
 
                 scheduler.start();
@@ -185,7 +185,7 @@ public class JobExecutionEngineTest extends SingleClusterTest {
                 ClusterService clusterService = node.injector().getInstance(ClusterService.class);
 
                 Scheduler scheduler = new SchedulerBuilder<DefaultJobConfig>().client(tc).name("test_" + clusterService.getNodeName())
-                        .nodeFilter("node_group_1:xxx").configIndex("testjobconfig").jobFactory(new ConstantHashJobConfig.Factory(TestJob.class))
+                        .nodeFilter("node_group_1:xxx").configIndex("testjobconfig").jobConfigFactory(new ConstantHashJobConfig.Factory(TestJob.class))
                         .distributed(clusterService).nodeComparator(new NodeNameComparator(clusterService)).build();
 
                 scheduler.start();

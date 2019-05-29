@@ -19,6 +19,7 @@ import org.quartz.SchedulerException;
 import org.quartz.impl.DirectSchedulerFactory;
 import org.quartz.simpl.SimpleThreadPool;
 import org.quartz.spi.ClassLoadHelper;
+import org.quartz.spi.JobFactory;
 import org.quartz.spi.JobStore;
 import org.quartz.spi.SchedulerPlugin;
 import org.quartz.spi.ThreadPool;
@@ -41,7 +42,7 @@ public class SchedulerBuilder<JobType extends JobConfig> {
     private Client client;
     private int maxThreads = 3;
     private int threadPriority = Thread.NORM_PRIORITY;
-    private JobConfigFactory<JobType> jobFactory;
+    private JobConfigFactory<JobType> jobConfigFactory;
     private Iterable<JobType> jobConfigSource;
     private JobStore jobStore;
     private JobDistributor jobDistributor;
@@ -51,6 +52,7 @@ public class SchedulerBuilder<JobType extends JobConfig> {
     private Map<String, SchedulerPlugin> schedulerPluginMap = new HashMap<>();
     private NodeComparator<?> nodeComparator;
     private String nodeId;
+    private JobFactory jobFactory;
 
     public SchedulerBuilder<JobType> name(String name) {
         this.name = name;
@@ -92,7 +94,12 @@ public class SchedulerBuilder<JobType extends JobConfig> {
         return this;
     }
 
-    public SchedulerBuilder<JobType> jobFactory(JobConfigFactory<JobType> jobFactory) {
+    public SchedulerBuilder<JobType> jobConfigFactory(JobConfigFactory<JobType> jobFactory) {
+        this.jobConfigFactory = jobFactory;
+        return this;
+    }
+
+    public SchedulerBuilder<JobType> jobFactory(JobFactory jobFactory) {
         this.jobFactory = jobFactory;
         return this;
     }
@@ -135,7 +142,7 @@ public class SchedulerBuilder<JobType extends JobConfig> {
         }
 
         if (this.jobConfigSource == null) {
-            this.jobConfigSource = new IndexJobConfigSource<>(configIndex, client, jobFactory, jobDistributor);
+            this.jobConfigSource = new IndexJobConfigSource<>(configIndex, client, jobConfigFactory, jobDistributor);
         }
 
         if (clusterService != null) {
@@ -143,7 +150,7 @@ public class SchedulerBuilder<JobType extends JobConfig> {
         }
 
         if (this.jobStore == null) {
-            this.jobStore = new IndexJobStateStore<>(stateIndex, nodeId, client, jobConfigSource, jobFactory);
+            this.jobStore = new IndexJobStateStore<>(stateIndex, nodeId, client, jobConfigSource, jobConfigFactory);
         }
 
         if (this.jobStore instanceof DistributedJobStore && this.jobDistributor != null) {
@@ -160,7 +167,13 @@ public class SchedulerBuilder<JobType extends JobConfig> {
 
         // TODO well, change this somehow:
 
-        return DirectSchedulerFactory.getInstance().getScheduler(name);
+        Scheduler scheduler = DirectSchedulerFactory.getInstance().getScheduler(name);
+
+        if (jobFactory != null) {
+            scheduler.setJobFactory(jobFactory);
+        }
+
+        return scheduler;
     }
 
     private static class CleanupSchedulerPlugin implements SchedulerPlugin {

@@ -71,6 +71,7 @@ import org.quartz.spi.TriggerFiredResult;
 import com.floragunn.searchsupport.jobs.cluster.DistributedJobStore;
 import com.floragunn.searchsupport.jobs.config.JobConfig;
 import com.floragunn.searchsupport.jobs.config.JobConfigFactory;
+import com.floragunn.searchsupport.jobs.config.JobDetailWithBaseConfig;
 import com.floragunn.searchsupport.util.SingleElementBlockingQueue;
 import com.google.common.base.Objects;
 import com.google.common.collect.HashBasedTable;
@@ -181,7 +182,13 @@ public class IndexJobStateStore<JobType extends com.floragunn.searchsupport.jobs
 
     @Override
     public synchronized void storeJob(JobDetail newJob, boolean replaceExisting) throws ObjectAlreadyExistsException, JobPersistenceException {
-        InternalJobDetail newJobLocal = new InternalJobDetail(newJob, this);
+        JobConfig baseConfig = null;
+
+        if (newJob instanceof JobDetailWithBaseConfig) {
+            baseConfig = ((JobDetailWithBaseConfig) newJob).getBaseConfig();
+        }
+
+        InternalJobDetail newJobLocal = new InternalJobDetail(newJob, baseConfig, this);
 
         addToCollections(newJobLocal);
     }
@@ -837,7 +844,7 @@ public class IndexJobStateStore<JobType extends com.floragunn.searchsupport.jobs
         }
 
         // TODO make sure instances are not swapped out due to a reload
-        
+
         synchronized (this) {
             InternalJobDetail internalJobDetail = toInternal(jobDetail);
             InternalOperableTrigger internalOperableTrigger = toInternal(trigger);
@@ -1174,7 +1181,7 @@ public class IndexJobStateStore<JobType extends com.floragunn.searchsupport.jobs
         Collection<InternalJobDetail> result = new ArrayList<>(jobConfigSet.size());
 
         for (JobType jobConfig : jobConfigSet) {
-            InternalJobDetail internalJobDetail = new InternalJobDetail(this.jobFactory.createJobDetail(jobConfig), this);
+            InternalJobDetail internalJobDetail = new InternalJobDetail(this.jobFactory.createJobDetail(jobConfig), jobConfig, this);
 
             for (Trigger triggerConfig : jobConfig.getTriggers()) {
                 if (!(triggerConfig instanceof OperableTrigger)) {
@@ -1216,7 +1223,7 @@ public class IndexJobStateStore<JobType extends com.floragunn.searchsupport.jobs
                 log.info("Trigger " + internalOperableTrigger + " is still executing on local node.");
             } else {
                 log.info("Trigger " + internalOperableTrigger + " is marked as still executing on node " + internalOperableTrigger.getNode());
-                
+
                 // TODO What to do? Ask the other node if it is still executing? Timeout?
             }
             break;
@@ -1354,16 +1361,18 @@ public class IndexJobStateStore<JobType extends com.floragunn.searchsupport.jobs
         this.dirtyTriggers.get().clear();
     }
 
-    static class InternalJobDetail implements JobDetail {
+    static class InternalJobDetail implements JobDetail, JobDetailWithBaseConfig {
 
         private static final long serialVersionUID = -4500332272991179774L;
 
         private JobDetail delegate;
         private final IndexJobStateStore<?> jobStore;
         private List<InternalOperableTrigger> triggers = new ArrayList<>();
+        private JobConfig baseConfig;
 
-        InternalJobDetail(JobDetail jobDetail, IndexJobStateStore<?> jobStore) {
+        InternalJobDetail(JobDetail jobDetail, JobConfig baseConfig, IndexJobStateStore<?> jobStore) {
             this.delegate = jobDetail;
+            this.baseConfig = baseConfig;
             this.jobStore = jobStore;
         }
 
@@ -1409,8 +1418,18 @@ public class IndexJobStateStore<JobType extends com.floragunn.searchsupport.jobs
         }
 
         @Override
+        public JobConfig getBaseConfig() {
+            return this.baseConfig;
+        }
+
+        @Override
+        public <T> T getBaseConfig(Class<T> type) {
+            return type.cast(baseConfig);
+        }
+
+        @Override
         public Object clone() {
-            return new InternalJobDetail(this.delegate, this.jobStore);
+            return new InternalJobDetail(this.delegate, this.baseConfig, this.jobStore);
         }
 
         @Override
@@ -1473,6 +1492,7 @@ public class IndexJobStateStore<JobType extends com.floragunn.searchsupport.jobs
                 }
             }
         }
+
     }
 
     static class InternalOperableTrigger implements OperableTrigger, ToXContentObject {
