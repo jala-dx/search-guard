@@ -6,7 +6,7 @@ import org.elasticsearch.common.bytes.BytesReference;
 import org.quartz.JobDetail;
 
 public interface JobConfigFactory<JobConfigType extends JobConfig> {
-    JobConfigType createFromBytes(String id, BytesReference source) throws ParseException;
+    JobConfigType createFromBytes(String id, BytesReference source, long version) throws ParseException;
 
     JobDetail createJobDetail(JobConfigType jobType);
 }

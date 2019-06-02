@@ -15,6 +15,15 @@ public class DefaultJobConfig implements JobConfig {
     private Map<String, Object> jobDataMap;
     private boolean durable;
     private List<Trigger> triggers;
+    private long version;
+
+    public long getVersion() {
+        return version;
+    }
+
+    public void setVersion(long version) {
+        this.version = version;
+    }
 
     public DefaultJobConfig(Class<? extends Job> jobClass) {
         this.jobClass = jobClass;

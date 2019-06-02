@@ -150,7 +150,7 @@ public class SchedulerBuilder<JobType extends JobConfig> {
         }
 
         if (this.jobStore == null) {
-            this.jobStore = new IndexJobStateStore<>(stateIndex, nodeId, client, jobConfigSource, jobConfigFactory);
+            this.jobStore = new IndexJobStateStore<>(name, stateIndex, nodeId, client, jobConfigSource, jobConfigFactory);
         }
 
         if (this.jobStore instanceof DistributedJobStore && this.jobDistributor != null) {

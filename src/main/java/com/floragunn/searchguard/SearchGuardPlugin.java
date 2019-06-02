@@ -159,6 +159,7 @@ import com.floragunn.searchguard.transport.DefaultInterClusterRequestEvaluator;
 import com.floragunn.searchguard.transport.InterClusterRequestEvaluator;
 import com.floragunn.searchguard.transport.SearchGuardInterceptor;
 import com.floragunn.searchguard.user.User;
+import com.floragunn.searchsupport.jobs.actions.SchedulerActions;
 import com.google.common.collect.Lists;
 
 public final class SearchGuardPlugin extends SearchGuardSSLPlugin implements ClusterPlugin, MapperPlugin {
@@ -461,6 +462,11 @@ public final class SearchGuardPlugin extends SearchGuardSSLPlugin implements Clu
             actions.add(new ActionHandler<>(LicenseInfoAction.INSTANCE, TransportLicenseInfoAction.class));
             actions.add(new ActionHandler<>(WhoAmIAction.INSTANCE, TransportWhoAmIAction.class));
         }
+        
+        // TODO disable scheduling? Other way of hooking in?
+        
+        actions.addAll(SchedulerActions.getActions());
+        
         return actions;
     }
 

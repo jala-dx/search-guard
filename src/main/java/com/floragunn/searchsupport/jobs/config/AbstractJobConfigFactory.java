@@ -46,10 +46,10 @@ public abstract class AbstractJobConfigFactory<JobConfigType extends JobConfig> 
     }
 
     @Override
-    public JobConfigType createFromBytes(String id, BytesReference source) throws ParseException {
+    public JobConfigType createFromBytes(String id, BytesReference source, long version) throws ParseException {
         ReadContext ctx = JsonPath.using(JSON_PATH_CONFIG).parse(source.utf8ToString());
 
-        return createFromReadContext(id, ctx);
+        return createFromReadContext(id, ctx, version);
     }
 
     @Override
@@ -67,7 +67,7 @@ public abstract class AbstractJobConfigFactory<JobConfigType extends JobConfig> 
         return jobBuilder.build();
     }
 
-    abstract protected JobConfigType createFromReadContext(String id, ReadContext ctx) throws ParseException;
+    abstract protected JobConfigType createFromReadContext(String id, ReadContext ctx, long version) throws ParseException;
 
     protected JobKey getJobKey(String id, ReadContext ctx) {
         return new JobKey(id, group);

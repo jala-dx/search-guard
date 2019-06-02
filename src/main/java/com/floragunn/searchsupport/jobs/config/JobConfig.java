@@ -24,5 +24,7 @@ public interface JobConfig {
     int hashCode();
 
     boolean equals(Object other);
+    
+    long getVersion();
 
 }

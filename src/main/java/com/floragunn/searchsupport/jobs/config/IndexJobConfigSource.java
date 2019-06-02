@@ -82,7 +82,7 @@ public class IndexJobConfigSource<JobType extends JobConfig> implements Iterable
             while (this.current == null && this.searchHitIterator.hasNext()) {
                 SearchHit searchHit = this.searchHitIterator.next();
                 try {
-                    this.current = jobFactory.createFromBytes(searchHit.getId(), searchHit.getSourceRef());
+                    this.current = jobFactory.createFromBytes(searchHit.getId(), searchHit.getSourceRef(), searchHit.getVersion());
                 } catch (ParseException e) {
                     log.error("Error while parsing job configuration " + indexName + "/" + searchHit.getId() + ":\n" + searchHit.getSourceAsString(),
                             e);

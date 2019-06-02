@@ -17,7 +17,7 @@ public class DefaultJobConfigFactory extends AbstractJobConfigFactory<DefaultJob
         return new DefaultJobConfig(getJobClass(ctx));
     }
 
-    protected DefaultJobConfig createFromReadContext(String id, ReadContext ctx) throws ParseException {
+    protected DefaultJobConfig createFromReadContext(String id, ReadContext ctx, long version) throws ParseException {
         DefaultJobConfig result = createObject(id, ctx);
         JobKey jobKey = getJobKey(id, ctx);
 
@@ -33,6 +33,7 @@ public class DefaultJobConfigFactory extends AbstractJobConfigFactory<DefaultJob
 
         result.setJobDataMap(getJobDataMap(ctx));
         result.setTriggers(getTriggers(jobKey, ctx));
+        result.setVersion(version);
 
         return result;
     }

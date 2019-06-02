@@ -15,6 +15,7 @@ import java.util.TreeSet;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
+import java.util.function.Function;
 import java.util.stream.Collectors;
 
 import org.apache.logging.log4j.LogManager;
@@ -75,6 +76,7 @@ import com.floragunn.searchsupport.jobs.config.JobDetailWithBaseConfig;
 import com.floragunn.searchsupport.util.SingleElementBlockingQueue;
 import com.google.common.base.Objects;
 import com.google.common.collect.HashBasedTable;
+import com.google.common.collect.MapMaker;
 import com.google.common.collect.Sets;
 import com.google.common.collect.Table;
 
@@ -83,6 +85,13 @@ public class IndexJobStateStore<JobType extends com.floragunn.searchsupport.jobs
     // TODO maybe separate loggers for each scheduler instance?
     private static final Logger log = LogManager.getLogger(IndexJobStateStore.class);
 
+    private final static Map<String, IndexJobStateStore<?>> schedulerToJobStoreMap = new MapMaker().concurrencyLevel(4).weakValues().makeMap();
+
+    public static IndexJobStateStore<?> getInstanceBySchedulerName(String schedulerName) {
+        return schedulerToJobStoreMap.get(schedulerName);
+    }
+
+    private final String schedulerName;
     private final String indexName;
     private final String statusIndexName;
     private final String nodeId;
@@ -105,8 +114,9 @@ public class IndexJobStateStore<JobType extends com.floragunn.searchsupport.jobs
     private final ExecutorService configChangeExecutor = new ThreadPoolExecutor(1, 1, 0L, TimeUnit.MILLISECONDS,
             new SingleElementBlockingQueue<Runnable>());
 
-    public IndexJobStateStore(String indexName, String nodeId, Client client, Iterable<JobType> jobConfigSource,
+    public IndexJobStateStore(String schedulerName, String indexName, String nodeId, Client client, Iterable<JobType> jobConfigSource,
             JobConfigFactory<JobType> jobFactory) {
+        this.schedulerName = schedulerName;
         this.indexName = indexName;
         this.statusIndexName = indexName + "_status";
         this.nodeId = nodeId;
@@ -130,6 +140,7 @@ public class IndexJobStateStore<JobType extends com.floragunn.searchsupport.jobs
     public void initialize(ClassLoadHelper loadHelper, SchedulerSignaler signaler) throws SchedulerConfigException {
         this.signaler = signaler;
         this.initJobs();
+        schedulerToJobStoreMap.put(schedulerName, this);
     }
 
     @Override
@@ -963,6 +974,13 @@ public class IndexJobStateStore<JobType extends com.floragunn.searchsupport.jobs
             throw new JobPersistenceException("Trigger " + newTrigger + " references non-existing job" + newTrigger.getJobKey());
         }
 
+        // TODO replaceexisting
+
+        return storeTriggerInHeap(internalJobDetail, newTrigger);
+    }
+
+    private synchronized InternalOperableTrigger storeTriggerInHeap(InternalJobDetail internalJobDetail, OperableTrigger newTrigger) {
+
         InternalOperableTrigger internalOperableTrigger = new InternalOperableTrigger(newTrigger);
 
         internalJobDetail.addTrigger(internalOperableTrigger);
@@ -970,6 +988,10 @@ public class IndexJobStateStore<JobType extends com.floragunn.searchsupport.jobs
         addToCollections(internalOperableTrigger);
 
         updateTriggerStateToIdle(internalOperableTrigger);
+
+        if (internalOperableTrigger.getState() == InternalOperableTrigger.State.WAITING) {
+            this.activeTriggers.add(internalOperableTrigger);
+        }
 
         return internalOperableTrigger;
     }
@@ -1181,36 +1203,223 @@ public class IndexJobStateStore<JobType extends com.floragunn.searchsupport.jobs
         Collection<InternalJobDetail> result = new ArrayList<>(jobConfigSet.size());
 
         for (JobType jobConfig : jobConfigSet) {
-            InternalJobDetail internalJobDetail = new InternalJobDetail(this.jobFactory.createJobDetail(jobConfig), jobConfig, this);
-
-            for (Trigger triggerConfig : jobConfig.getTriggers()) {
-                if (!(triggerConfig instanceof OperableTrigger)) {
-                    log.error("Trigger is not OperableTrigger: " + triggerConfig);
-                    continue;
-                }
-
-                OperableTrigger operableTriggerConfig = (OperableTrigger) triggerConfig;
-                InternalOperableTrigger internalOperableTrigger = triggerStates.get(triggerConfig.getKey());
-
-                if (internalOperableTrigger != null) {
-                    internalOperableTrigger.setDelegate(operableTriggerConfig);
-                    checkTriggerStateAfterRecovery(internalOperableTrigger);
-                } else {
-                    internalOperableTrigger = new InternalOperableTrigger(operableTriggerConfig);
-                    internalOperableTrigger.computeFirstFireTime(null);
-                    internalOperableTrigger.node = this.nodeId;
-
-                    updateTriggerStateToIdle(internalOperableTrigger);
-                }
-
-                internalJobDetail.addTrigger(internalOperableTrigger);
-            }
-
-            result.add(internalJobDetail);
+            result.add(createInternalJobDetailFromJobConfig(jobConfig, triggerStates));
         }
 
         if (log.isInfoEnabled()) {
             log.info("Jobs loaded: " + result);
+        }
+
+        return result;
+    }
+
+    public String updateJobs() {
+        Set<JobType> newJobConfig = this.loadJobConfig();
+        Map<JobKey, InternalJobDetail> newJobs = new HashMap<>();
+        Map<JobKey, InternalJobDetail> updatedJobs = new HashMap<>();
+        Map<JobKey, InternalJobDetail> deletedJobs = new HashMap<>();
+        Set<JobKey> newJobKeys = new HashSet<>(newJobConfig.size());
+
+        log.info("Updating jobs: " + newJobConfig);
+
+        synchronized (this) {
+            Map<JobKey, JobType> loadedJobConfig = this.getLoadedJobConfig();
+
+            for (JobType newJob : newJobConfig) {
+                JobKey jobKey = newJob.getJobKey();
+                newJobKeys.add(jobKey);
+                JobType existingJob = loadedJobConfig.get(jobKey);
+
+                if (existingJob == null) {
+                    InternalJobDetail newJobDetail = createInternalJobDetailFromJobConfig(newJob, Collections.emptyMap());
+                    newJobs.put(jobKey, newJobDetail);
+                    addToCollections(newJobDetail);
+                    newJobDetail.engageTriggers();
+
+                } else if (existingJob.getVersion() < newJob.getVersion() || existingJob.getVersion() == -1 || newJob.getVersion() == -1) {
+                    InternalJobDetail existingJobDetail = this.keyToJobMap.get(existingJob.getJobKey());
+
+                    if (existingJobDetail != null) {
+                        if (updateJob(existingJobDetail, existingJob, newJob)) {
+                            updatedJobs.put(jobKey, createInternalJobDetailFromJobConfig(newJob, Collections.emptyMap()));
+                        }
+                    } else {
+                        log.info("Found existing job config but no matching job detail for " + existingJob
+                                + ". This is a bit weird. Will create job detail now.");
+
+                        InternalJobDetail newJobDetail = createInternalJobDetailFromJobConfig(newJob, Collections.emptyMap());
+                        newJobs.put(jobKey, newJobDetail);
+                        addToCollections(newJobDetail);
+                        newJobDetail.engageTriggers();
+                    }
+                }
+            }
+
+            for (JobKey existingJob : loadedJobConfig.keySet()) {
+                if (!newJobKeys.contains(existingJob)) {
+                    InternalJobDetail jobDetail = this.keyToJobMap.get(existingJob);
+                    deletedJobs.put(existingJob, jobDetail);
+                    removeJob(jobDetail);
+                }
+            }
+        }
+
+        flushDirtyTriggersToIndex();
+
+        if (newJobs.size() != 0 || updatedJobs.size() != 0 || deletedJobs.size() != 0) {
+            signaler.signalSchedulingChange(0L);
+
+            log.info("Job update finished.\nNew Jobs: " + newJobs.values() + "\nUpdated Jobs: " + updatedJobs.values() + "\nDeleted Jobs: "
+                    + deletedJobs.values());
+
+            return "New: " + newJobs.values().size() + "\nUpdated: " + updatedJobs.size() + "\nDeleted Jobs: " + deletedJobs.size();
+        } else {
+            log.info("Job update finished. Nothing changed.");
+
+            return "No changes";
+        }
+
+    }
+
+    private synchronized boolean updateJob(InternalJobDetail existingJobDetail, JobType existingJobConfig, JobType newJobConfig) {
+        existingJobDetail.baseConfig = newJobConfig;
+        JobDetail newJobDetail = this.jobFactory.createJobDetail(newJobConfig);
+        boolean changed = false;
+
+        if (!areJobDetailsEqual(existingJobDetail, newJobDetail)) {
+            existingJobDetail.delegate = newJobDetail;
+            changed = true;
+        }
+
+        if (updateTriggers(existingJobDetail, existingJobConfig, newJobConfig)) {
+            changed = true;
+        }
+
+        return changed;
+    }
+
+    private boolean areJobDetailsEqual(JobDetail existingJobDetail, JobDetail newJobDetail) {
+
+        if (!Objects.equal(existingJobDetail.getDescription(), newJobDetail.getDescription())) {
+            return false;
+        }
+
+        if (existingJobDetail.getJobClass() != newJobDetail.getJobClass()) {
+            return false;
+        }
+
+        if (existingJobDetail.isDurable() != newJobDetail.isDurable()) {
+            return false;
+        }
+
+        if (!Objects.equal(existingJobDetail.getJobDataMap(), newJobDetail.getJobDataMap())) {
+            return false;
+        }
+
+        return true;
+    }
+
+    private synchronized boolean updateTriggers(InternalJobDetail existingJobDetail, JobType existingJobConfig, JobType newJobConfig) {
+        Map<TriggerKey, InternalOperableTrigger> existingTriggers = existingJobDetail.getTriggersAsMap();
+        Map<TriggerKey, InternalOperableTrigger> existingTriggersNotInNewTriggers = new HashMap<>(existingTriggers);
+        Set<TriggerKey> newTriggerKeys = new HashSet<>();
+        Map<TriggerKey, InternalOperableTrigger> newTriggers = new HashMap<>();
+        Map<TriggerKey, InternalOperableTrigger> changedTriggers = new HashMap<>();
+        boolean changed = false;
+
+        for (Trigger newTrigger : newJobConfig.getTriggers()) {
+            newTriggerKeys.add(newTrigger.getKey());
+            InternalOperableTrigger existingTrigger = existingTriggers.get(newTrigger.getKey());
+
+            if (existingTrigger == null) {
+                InternalOperableTrigger newInternalOperableTrigger = storeTriggerInHeap(existingJobDetail, (OperableTrigger) newTrigger);
+                newInternalOperableTrigger.markDirty();
+                newTriggers.put(newInternalOperableTrigger.getKey(), newInternalOperableTrigger);
+                changed = true;
+            } else if (!existingTrigger.delegate.equals(newTrigger)) {
+                existingTrigger.delegate = (OperableTrigger) newTrigger;
+                existingTrigger.markDirty();
+                changedTriggers.put(existingTrigger.getKey(), existingTrigger);
+                changed = true;
+                existingTriggersNotInNewTriggers.remove(existingTrigger.getKey());
+            } else {
+                // unchanged
+                existingTriggersNotInNewTriggers.remove(existingTrigger.getKey());
+            }
+        }
+
+        for (Map.Entry<TriggerKey, InternalOperableTrigger> entry : existingTriggersNotInNewTriggers.entrySet()) {
+            this.keyToTriggerMap.remove(entry.getKey());
+            this.groupAndKeyToTriggerMap.remove(entry.getKey().getGroup(), entry.getKey());
+            this.activeTriggers.remove(entry.getValue());
+            entry.getValue().jobDetail.triggers.remove(entry.getValue());
+            changed = true;
+        }
+
+        if (changed) {
+            log.info("Updated triggers of " + existingJobDetail + ":\nNew triggers: " + newTriggers + "\nChanged triggers: " + changedTriggers
+                    + "\nRemoved triggers: " + existingTriggersNotInNewTriggers);
+        } else {
+            log.info("No triggers of " + existingJobConfig + " have been changed");
+        }
+        return changed;
+    }
+
+    private synchronized void removeJob(InternalJobDetail jobDetail) {
+        if (jobDetail == null) {
+            return;
+        }
+
+        JobKey jobKey = jobDetail.getKey();
+
+        this.groupAndKeyToJobMap.remove(jobKey.getGroup(), jobKey);
+        this.blockedJobs.remove(jobKey);
+        this.keyToJobMap.remove(jobKey);
+
+        for (InternalOperableTrigger trigger : jobDetail.triggers) {
+            TriggerKey triggerKey = trigger.getKey();
+
+            this.groupAndKeyToTriggerMap.remove(triggerKey.getGroup(), triggerKey);
+            this.keyToTriggerMap.remove(triggerKey);
+            this.activeTriggers.remove(trigger);
+        }
+    }
+
+    private InternalJobDetail createInternalJobDetailFromJobConfig(JobType jobConfig, Map<TriggerKey, InternalOperableTrigger> triggerStates) {
+        InternalJobDetail internalJobDetail = new InternalJobDetail(this.jobFactory.createJobDetail(jobConfig), jobConfig, this);
+
+        for (Trigger triggerConfig : jobConfig.getTriggers()) {
+            if (!(triggerConfig instanceof OperableTrigger)) {
+                log.error("Trigger is not OperableTrigger: " + triggerConfig);
+                return null;
+            }
+
+            OperableTrigger operableTriggerConfig = (OperableTrigger) triggerConfig;
+            InternalOperableTrigger internalOperableTrigger = triggerStates.get(triggerConfig.getKey());
+
+            if (internalOperableTrigger != null) {
+                internalOperableTrigger.setDelegate(operableTriggerConfig);
+                checkTriggerStateAfterRecovery(internalOperableTrigger);
+            } else {
+                internalOperableTrigger = new InternalOperableTrigger(operableTriggerConfig);
+                internalOperableTrigger.computeFirstFireTime(null);
+                internalOperableTrigger.node = this.nodeId;
+
+                updateTriggerStateToIdle(internalOperableTrigger);
+            }
+
+            internalJobDetail.addTrigger(internalOperableTrigger);
+        }
+
+        return internalJobDetail;
+    }
+
+    @SuppressWarnings("unchecked")
+    private synchronized Map<JobKey, JobType> getLoadedJobConfig() {
+        HashMap<JobKey, JobType> result = new HashMap<>(this.keyToJobMap.size());
+
+        for (Map.Entry<JobKey, InternalJobDetail> entry : this.keyToJobMap.entrySet()) {
+            result.put(entry.getKey(), (JobType) entry.getValue().baseConfig);
         }
 
         return result;
@@ -1491,6 +1700,20 @@ public class IndexJobStateStore<JobType extends com.floragunn.searchsupport.jobs
                     trigger.setState(InternalOperableTrigger.State.PAUSED);
                 }
             }
+        }
+
+        void engageTriggers() {
+            for (InternalOperableTrigger trigger : this.triggers) {
+                if (trigger.state == InternalOperableTrigger.State.WAITING) {
+                    this.jobStore.activeTriggers.add(trigger);
+                } else {
+                    this.jobStore.activeTriggers.remove(trigger);
+                }
+            }
+        }
+
+        Map<TriggerKey, InternalOperableTrigger> getTriggersAsMap() {
+            return triggers.stream().collect(Collectors.toMap(Trigger::getKey, Function.identity()));
         }
 
     }

@@ -32,8 +32,8 @@ public class ConstantHashJobConfig extends DefaultJobConfig {
         }
 
         @Override
-        protected DefaultJobConfig createFromReadContext(String id, ReadContext ctx) throws ParseException {
-            ConstantHashJobConfig result = (ConstantHashJobConfig) super.createFromReadContext(id, ctx);
+        protected DefaultJobConfig createFromReadContext(String id, ReadContext ctx, long version) throws ParseException {
+            ConstantHashJobConfig result = (ConstantHashJobConfig) super.createFromReadContext(id, ctx, version);
 
             Integer hashCode = ctx.read("$.hash", Integer.class);
 
