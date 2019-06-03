@@ -271,7 +271,7 @@ public final class SearchGuardPlugin extends SearchGuardSSLPlugin implements Clu
         ReflectionHelper.init(enterpriseModulesEnabled);
 
         ReflectionHelper.registerMngtRestApiHandler(settings);
-        
+
         log.info("Clustername: {}", settings.get("cluster.name", "elasticsearch"));
 
         if (!transportSSLEnabled && !sslOnly) {
@@ -434,10 +434,10 @@ public final class SearchGuardPlugin extends SearchGuardSSLPlugin implements Clu
                 handlers.add(new TenantInfoAction(settings, restController, Objects.requireNonNull(evaluator), Objects.requireNonNull(threadPool),
                         Objects.requireNonNull(cs), Objects.requireNonNull(adminDns)));
 
-                Collection<RestHandler> apiHandler = ReflectionHelper.instantiateMngtRestApiHandler(settings, configPath, restController, localClient,
-                        adminDns, cr, cs, Objects.requireNonNull(principalExtractor), evaluator, threadPool, Objects.requireNonNull(auditLog));
-                handlers.addAll(apiHandler);
-                log.debug("Added {} management rest handler(s)", apiHandler.size());
+                handlers.addAll(ReflectionHelper.instantiateMngtRestApiHandler(settings, configPath, restController, localClient, adminDns, cr, cs,
+                        Objects.requireNonNull(principalExtractor), evaluator, threadPool, Objects.requireNonNull(auditLog)));
+                handlers.addAll(ReflectionHelper.instantiateRestApiHandler("com.floragunn.lastalert.api.LastAlertApiActions", settings, configPath,
+                        restController, localClient, adminDns, cr, cs, principalExtractor, evaluator, threadPool, auditLog));
             }
         }
 
@@ -462,11 +462,11 @@ public final class SearchGuardPlugin extends SearchGuardSSLPlugin implements Clu
             actions.add(new ActionHandler<>(LicenseInfoAction.INSTANCE, TransportLicenseInfoAction.class));
             actions.add(new ActionHandler<>(WhoAmIAction.INSTANCE, TransportWhoAmIAction.class));
         }
-        
+
         // TODO disable scheduling? Other way of hooking in?
-        
+
         actions.addAll(SchedulerActions.getActions());
-        
+
         return actions;
     }
 
@@ -754,20 +754,17 @@ public final class SearchGuardPlugin extends SearchGuardSSLPlugin implements Clu
         final XFFResolver xffResolver = new XFFResolver(threadPool);
         backendRegistry = new BackendRegistry(settings, adminDns, xffResolver, auditLog, threadPool);
         final CompatConfig compatConfig = new CompatConfig(environment);
-        
-        
-        
-        evaluator = new PrivilegesEvaluator(clusterService, threadPool, cr, resolver, auditLog, 
-                settings, privilegesInterceptor, cih, irr, enterpriseModulesEnabled);
 
-        
+        evaluator = new PrivilegesEvaluator(clusterService, threadPool, cr, resolver, auditLog, settings, privilegesInterceptor, cih, irr,
+                enterpriseModulesEnabled);
+
         final DynamicConfigFactory dcf = new DynamicConfigFactory(cr, settings, configPath, localClient, threadPool, cih);
         dcf.registerDCFListener(backendRegistry);
         dcf.registerDCFListener(compatConfig);
         dcf.registerDCFListener(irr);
         dcf.registerDCFListener(xffResolver);
         dcf.registerDCFListener(evaluator);
-        
+
         cr.setDynamicConfigFactory(dcf);
 
         sgf = new SearchGuardFilter(evaluator, adminDns, dlsFlsValve, auditLog, threadPool, cs, complianceConfig, compatConfig);
@@ -791,6 +788,9 @@ public final class SearchGuardPlugin extends SearchGuardSSLPlugin implements Clu
         components.add(evaluator);
         components.add(sgi);
         components.add(dcf);
+
+        components.addAll(ReflectionHelper.createAlertingComponents(settings, configPath, localClient, clusterService, threadPool,
+                resourceWatcherService, scriptService, xContentRegistry, environment, nodeEnvironment, namedWriteableRegistry));
 
         sgRestHandler = new SearchGuardRestFilter(backendRegistry, auditLog, threadPool, principalExtractor, settings, configPath, compatConfig);
 
@@ -850,7 +850,8 @@ public final class SearchGuardPlugin extends SearchGuardSSLPlugin implements Clu
             settings.add(
                     Setting.boolSetting(ConfigConstants.SEARCHGUARD_ALLOW_UNSAFE_DEMOCERTIFICATES, false, Property.NodeScope, Property.Filtered));
             settings.add(Setting.boolSetting(ConfigConstants.SEARCHGUARD_ALLOW_DEFAULT_INIT_SGINDEX, false, Property.NodeScope, Property.Filtered));
-            settings.add(Setting.boolSetting(ConfigConstants.SEARCHGUARD_BACKGROUND_INIT_IF_SGINDEX_NOT_EXIST, true, Property.NodeScope, Property.Filtered));
+            settings.add(Setting.boolSetting(ConfigConstants.SEARCHGUARD_BACKGROUND_INIT_IF_SGINDEX_NOT_EXIST, true, Property.NodeScope,
+                    Property.Filtered));
 
             settings.add(Setting.groupSetting(ConfigConstants.SEARCHGUARD_AUTHCZ_REST_IMPERSONATION_USERS + ".", Property.NodeScope)); //not filtered here
 
@@ -1021,11 +1022,15 @@ public final class SearchGuardPlugin extends SearchGuardSSLPlugin implements Clu
             settings.add(Setting.boolSetting(ConfigConstants.SEARCHGUARD_UNSUPPORTED_INJECT_ADMIN_USER_ENABLED, false, Property.NodeScope,
                     Property.Filtered));
             settings.add(Setting.boolSetting(ConfigConstants.SEARCHGUARD_UNSUPPORTED_ALLOW_NOW_IN_DLS, false, Property.NodeScope, Property.Filtered));
-        
-            settings.add(Setting.boolSetting(ConfigConstants.SEARCHGUARD_UNSUPPORTED_RESTAPI_ALLOW_SGCONFIG_MODIFICATION, false, Property.NodeScope, Property.Filtered));
-        
-        
-            settings.add(Setting.boolSetting(ConfigConstants.SEARCHGUARD_UNSUPPORTED_LOAD_STATIC_RESOURCES, true, Property.NodeScope, Property.Filtered));
+
+            settings.add(Setting.boolSetting(ConfigConstants.SEARCHGUARD_UNSUPPORTED_RESTAPI_ALLOW_SGCONFIG_MODIFICATION, false, Property.NodeScope,
+                    Property.Filtered));
+
+            settings.add(
+                    Setting.boolSetting(ConfigConstants.SEARCHGUARD_UNSUPPORTED_LOAD_STATIC_RESOURCES, true, Property.NodeScope, Property.Filtered));
+
+            settings.addAll(ReflectionHelper.getSettings("com.floragunn.lastalert.LastAlert"));
+
         }
 
         return settings;
@@ -1046,7 +1051,7 @@ public final class SearchGuardPlugin extends SearchGuardSSLPlugin implements Clu
     @Override
     public void onNodeStarted() {
         log.info("Node started");
-        if(!sslOnly && !client && !disabled) {
+        if (!sslOnly && !client && !disabled) {
             cr.initOnNodeStart();
         }
         final Set<ModuleInfo> sgModules = ReflectionHelper.getModulesLoaded();
