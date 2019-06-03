@@ -25,6 +25,7 @@ import org.quartz.Scheduler;
 import org.quartz.SchedulerException;
 
 import com.floragunn.searchguard.test.SingleClusterTest;
+import com.floragunn.searchsupport.jobs.actions.SchedulerConfigUpdateAction;
 import com.floragunn.searchsupport.jobs.cluster.NodeNameComparator;
 import com.floragunn.searchsupport.jobs.config.DefaultJobConfig;
 
@@ -46,8 +47,8 @@ public class JobExecutionEngineTest extends SingleClusterTest {
                 ClusterService clusterService = node.injector().getInstance(ClusterService.class);
 
                 Scheduler scheduler = new SchedulerBuilder<DefaultJobConfig>().client(tc).name("test_" + clusterService.getNodeName())
-                        .configIndex("testjobconfig").jobConfigFactory(new ConstantHashJobConfig.Factory(LoggingTestJob.class)).distributed(clusterService)
-                        .nodeComparator(new NodeNameComparator(clusterService)).build();
+                        .configIndex("testjobconfig").jobConfigFactory(new ConstantHashJobConfig.Factory(LoggingTestJob.class))
+                        .distributed(clusterService).nodeComparator(new NodeNameComparator(clusterService)).build();
 
                 scheduler.start();
             }
@@ -185,8 +186,9 @@ public class JobExecutionEngineTest extends SingleClusterTest {
                 ClusterService clusterService = node.injector().getInstance(ClusterService.class);
 
                 Scheduler scheduler = new SchedulerBuilder<DefaultJobConfig>().client(tc).name("test_" + clusterService.getNodeName())
-                        .nodeFilter("node_group_1:xxx").configIndex("testjobconfig").jobConfigFactory(new ConstantHashJobConfig.Factory(TestJob.class))
-                        .distributed(clusterService).nodeComparator(new NodeNameComparator(clusterService)).build();
+                        .nodeFilter("node_group_1:xxx").configIndex("testjobconfig")
+                        .jobConfigFactory(new ConstantHashJobConfig.Factory(TestJob.class)).distributed(clusterService)
+                        .nodeComparator(new NodeNameComparator(clusterService)).build();
 
                 scheduler.start();
 
@@ -199,6 +201,47 @@ public class JobExecutionEngineTest extends SingleClusterTest {
             assertEquals(0, count);
 
             clusterHelper.stopCluster();
+
+        }
+
+    }
+
+    @Test
+    public void configUpdateTest() throws Exception {
+        final Settings settings = Settings.builder().build();
+
+        setup(settings);
+
+        try (Client tc = getInternalTransportClient()) {
+
+            String jobConfig = createJobConfig(1, "basic", null, "*/1 * * * * ?");
+
+            tc.index(new IndexRequest("testjobconfig").setRefreshPolicy(RefreshPolicy.IMMEDIATE).source(jobConfig, XContentType.JSON)).actionGet();
+
+            for (PluginAwareNode node : this.clusterHelper.allNodes()) {
+                if ("1".equals(node.settings().get("node.attr.node_index"))) {
+
+                    ClusterService clusterService = node.injector().getInstance(ClusterService.class);
+
+                    Scheduler scheduler = new SchedulerBuilder<DefaultJobConfig>().client(tc).name("test").configIndex("testjobconfig")
+                            .nodeFilter("node_index:1").jobConfigFactory(new ConstantHashJobConfig.Factory(TestJob.class)).distributed(clusterService)
+                            .nodeComparator(new NodeNameComparator(clusterService)).build();
+
+                    scheduler.start();
+                }
+            }
+
+            Thread.sleep(500);
+
+            jobConfig = createJobConfig(1, "late", null, "*/1 * * * * ?");
+            tc.index(new IndexRequest("testjobconfig").setRefreshPolicy(RefreshPolicy.IMMEDIATE).source(jobConfig, XContentType.JSON)).actionGet();
+            SchedulerConfigUpdateAction.send(tc, "test");
+
+            Thread.sleep(3 * 1000);
+
+            int count = TestJob.getCounter("late");
+
+            assertTrue("count is " + count, count >= 1);
 
         }
 

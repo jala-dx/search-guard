@@ -45,4 +45,10 @@ public class SchedulerConfigUpdateResponse extends BaseNodesResponse<TransportSc
     public void writeNodesTo(final StreamOutput out, List<TransportSchedulerConfigUpdateAction.NodeResponse> nodes) throws IOException {
         out.writeStreamableList(nodes);
     }
+
+    @Override
+    public String toString() {
+        return "SchedulerConfigUpdateResponse [failures=" + failures() + ", nodes=" + getNodesMap() + "]";
+    }
+
 }
