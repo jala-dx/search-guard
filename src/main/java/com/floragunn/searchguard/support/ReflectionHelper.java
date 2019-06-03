@@ -158,7 +158,7 @@ public class ReflectionHelper {
         try {
             final Class<?> clazz = Class.forName(className);
 
-            return (List<Setting<?>>) clazz.getDeclaredMethod("settings").invoke(null);
+            return (List<Setting<?>>) clazz.getDeclaredMethod("getSettings").invoke(null);
 
         } catch (final Throwable e) {
             log.warn("Unable to retrieve settings from {} due to {}", className,
