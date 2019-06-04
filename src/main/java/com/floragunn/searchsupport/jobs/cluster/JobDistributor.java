@@ -7,6 +7,7 @@ import org.apache.logging.log4j.Logger;
 import org.elasticsearch.cluster.ClusterChangedEvent;
 import org.elasticsearch.cluster.ClusterState;
 import org.elasticsearch.cluster.ClusterStateListener;
+import org.elasticsearch.cluster.block.ClusterBlockLevel;
 import org.elasticsearch.cluster.service.ClusterService;
 
 import com.floragunn.searchsupport.jobs.config.JobConfig;
@@ -69,7 +70,7 @@ public class JobDistributor implements AutoCloseable {
 
     private void init() {
         clusterService.addListener(clusterStateListener);
-        update(clusterService.state());
+        //    update(clusterService.state());
     }
 
     private boolean update(ClusterState clusterState) {
@@ -122,8 +123,15 @@ public class JobDistributor implements AutoCloseable {
 
         @Override
         public void clusterChanged(ClusterChangedEvent event) {
-            if (update(event.state()) && distributedJobStore != null) {
-                distributedJobStore.clusterConfigChanged();
+            if (event.state().blocks().hasGlobalBlockWithLevel(ClusterBlockLevel.READ)) {
+                log.debug("Cluster is not ready right now:\n" + event.state());
+                return;
+            }
+
+            boolean distributionChanged = update(event.state());
+
+            if (distributedJobStore != null && (!distributedJobStore.isInitialized() || distributionChanged)) {
+                distributedJobStore.clusterConfigChanged(event);
             }
         }
 

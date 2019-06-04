@@ -23,6 +23,9 @@ import org.apache.logging.log4j.Logger;
 import org.elasticsearch.action.index.IndexRequest;
 import org.elasticsearch.action.search.SearchResponse;
 import org.elasticsearch.client.Client;
+import org.elasticsearch.cluster.ClusterChangedEvent;
+import org.elasticsearch.cluster.block.ClusterBlockLevel;
+import org.elasticsearch.cluster.service.ClusterService;
 import org.elasticsearch.common.xcontent.ToXContent;
 import org.elasticsearch.common.xcontent.ToXContentObject;
 import org.elasticsearch.common.xcontent.XContentBuilder;
@@ -88,6 +91,7 @@ public class IndexJobStateStore<JobType extends com.floragunn.searchsupport.jobs
     private final static Map<String, IndexJobStateStore<?>> schedulerToJobStoreMap = new MapMaker().concurrencyLevel(4).weakValues().makeMap();
 
     public static IndexJobStateStore<?> getInstanceBySchedulerName(String schedulerName) {
+        log.info(schedulerToJobStoreMap);
         return schedulerToJobStoreMap.get(schedulerName);
     }
 
@@ -109,13 +113,15 @@ public class IndexJobStateStore<JobType extends com.floragunn.searchsupport.jobs
     private final Iterable<JobType> jobConfigSource;
     private final JobConfigFactory<JobType> jobFactory;
     private volatile boolean shutdown = false;
+    private volatile boolean initialized;
     private long misfireThreshold = 5000l;
     private ThreadLocal<Set<InternalOperableTrigger>> dirtyTriggers = ThreadLocal.withInitial(() -> new HashSet<>());
     private final ExecutorService configChangeExecutor = new ThreadPoolExecutor(1, 1, 0L, TimeUnit.MILLISECONDS,
             new SingleElementBlockingQueue<Runnable>());
+    private final ClusterService clusterService;
 
     public IndexJobStateStore(String schedulerName, String indexName, String nodeId, Client client, Iterable<JobType> jobConfigSource,
-            JobConfigFactory<JobType> jobFactory) {
+            JobConfigFactory<JobType> jobFactory, ClusterService clusterService) {
         this.schedulerName = schedulerName;
         this.indexName = indexName;
         this.statusIndexName = indexName + "_status";
@@ -123,10 +129,11 @@ public class IndexJobStateStore<JobType extends com.floragunn.searchsupport.jobs
         this.client = client;
         this.jobConfigSource = jobConfigSource;
         this.jobFactory = jobFactory;
+        this.clusterService = clusterService;
     }
 
     @Override
-    public void clusterConfigChanged() {
+    public void clusterConfigChanged(ClusterChangedEvent event) {
         if (shutdown) {
             return;
         }
@@ -139,8 +146,27 @@ public class IndexJobStateStore<JobType extends com.floragunn.searchsupport.jobs
     @Override
     public void initialize(ClassLoadHelper loadHelper, SchedulerSignaler signaler) throws SchedulerConfigException {
         this.signaler = signaler;
-        this.initJobs();
         schedulerToJobStoreMap.put(schedulerName, this);
+
+        // XXX argh, this is too early and throws an AssertionError. For now, we just skip this initialization for schedulers having a cluster service instance
+       // if (clusterService != null && clusterService.state().blocks().hasGlobalBlockWithLevel(ClusterBlockLevel.READ)) {
+       //     return;
+       // }
+        
+        if (clusterService != null) {
+            return;
+        }
+
+        try {
+            this.initJobs();
+        } catch (Exception e) {
+            if (clusterService != null) {
+
+                log.info("Error while initializing " + this + "\nWill try again during the next cluster change", e);
+            } else {
+                throw new SchedulerConfigException("Error while initializing " + this, e);
+            }
+        }
     }
 
     @Override
@@ -949,6 +975,10 @@ public class IndexJobStateStore<JobType extends com.floragunn.searchsupport.jobs
         return 20;
     }
 
+    public String getNodeId() {
+        return nodeId;
+    }
+
     private InternalJobDetail toInternal(JobDetail jobDetail) {
         if (jobDetail instanceof IndexJobStateStore.InternalJobDetail) {
             return (InternalJobDetail) jobDetail;
@@ -1160,7 +1190,11 @@ public class IndexJobStateStore<JobType extends com.floragunn.searchsupport.jobs
             }
 
             initActiveTriggers();
+
+            log.info("Scheduler " + schedulerName + " is initialized. Jobs: " + jobs.size() + " Active Triggers: " + activeTriggers.size());
         }
+
+        initialized = true;
 
         flushDirtyTriggersToIndex();
     }
@@ -2100,5 +2134,9 @@ public class IndexJobStateStore<JobType extends com.floragunn.searchsupport.jobs
         private boolean isForConfiguredIndex(ShardId shardId) {
             return IndexJobStateStore.this.indexName.equals(shardId.getIndexName());
         }
+    }
+
+    public boolean isInitialized() {
+        return initialized;
     }
 }

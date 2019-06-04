@@ -14,12 +14,18 @@ import java.util.Set;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
+import java.util.stream.StreamSupport;
 
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 import org.elasticsearch.client.Client;
+import org.elasticsearch.cluster.node.DiscoveryNode;
 import org.elasticsearch.cluster.service.ClusterService;
+import org.elasticsearch.common.Booleans;
 import org.elasticsearch.common.component.LifecycleListener;
+import org.elasticsearch.common.regex.Regex;
+import org.elasticsearch.common.settings.Settings;
+import org.elasticsearch.env.NodeEnvironment;
 import org.quartz.Calendar;
 import org.quartz.JobDataMap;
 import org.quartz.JobDetail;
@@ -43,6 +49,7 @@ import org.quartz.spi.JobStore;
 import org.quartz.spi.SchedulerPlugin;
 import org.quartz.spi.ThreadPool;
 
+import com.carrotsearch.hppc.ObjectHashSet;
 import com.floragunn.searchsupport.jobs.cluster.DistributedJobStore;
 import com.floragunn.searchsupport.jobs.cluster.JobDistributor;
 import com.floragunn.searchsupport.jobs.cluster.NodeComparator;
@@ -51,6 +58,8 @@ import com.floragunn.searchsupport.jobs.config.IndexJobConfigSource;
 import com.floragunn.searchsupport.jobs.config.JobConfig;
 import com.floragunn.searchsupport.jobs.config.JobConfigFactory;
 import com.floragunn.searchsupport.jobs.core.IndexJobStateStore;
+
+import joptsimple.internal.Strings;
 
 public class SchedulerBuilder<JobType extends JobConfig> {
     private final static Logger log = LogManager.getLogger(SchedulerBuilder.class);
@@ -72,6 +81,8 @@ public class SchedulerBuilder<JobType extends JobConfig> {
     private NodeComparator<?> nodeComparator;
     private String nodeId;
     private JobFactory jobFactory;
+    private Settings nodeSettings;
+    private NodeEnvironment nodeEnvironment;
 
     public SchedulerBuilder<JobType> name(String name) {
         this.name = name;
@@ -143,8 +154,19 @@ public class SchedulerBuilder<JobType extends JobConfig> {
         return this;
     }
 
+    public SchedulerBuilder<JobType> nodeSettings(Settings nodeSettings) {
+        this.nodeSettings = nodeSettings;
+        return this;
+    }
+
+    public SchedulerBuilder<JobType> nodeEnvironment(NodeEnvironment nodeEnvironment) {
+        this.nodeEnvironment = nodeEnvironment;
+        return this;
+    }
+
     public Scheduler build() throws SchedulerException {
-        if (!isSchedulerConfiguredForLocalNode()) {
+        if (isSchedulerPermanentlyDisabledForLocalNode()) {
+            log.info("Scheduler " + name + "is disabled for this node by node filter: " + this.nodeFilter);
             return new DisabledScheduler(name);
         }
 
@@ -169,12 +191,12 @@ public class SchedulerBuilder<JobType extends JobConfig> {
             this.jobConfigSource = new IndexJobConfigSource<>(configIndex, client, jobConfigFactory, jobDistributor);
         }
 
-        if (clusterService != null) {
-            this.nodeId = clusterService.localNode().getId();
+        if (this.nodeEnvironment != null) {
+            this.nodeId = this.nodeEnvironment.nodeId();
         }
 
         if (this.jobStore == null) {
-            this.jobStore = new IndexJobStateStore<>(name, stateIndex, nodeId, client, jobConfigSource, jobConfigFactory);
+            this.jobStore = new IndexJobStateStore<>(name, stateIndex, nodeId, client, jobConfigSource, jobConfigFactory, clusterService);
         }
 
         if (this.jobStore instanceof DistributedJobStore && this.jobDistributor != null) {
@@ -200,19 +222,9 @@ public class SchedulerBuilder<JobType extends JobConfig> {
         return scheduler;
     }
 
-    private boolean isSchedulerConfiguredForLocalNode() {
-        if (nodeFilter == null) {
-            return true;
-        }
-
-        if (clusterService == null) {
-            return true;
-        }
-
-        Collection<String> nodeIds = Arrays.asList(clusterService.state().nodes().resolveNodes(this.nodeFilter.split(",")));
-
-        return nodeIds.contains(clusterService.state().getNodes().getLocalNodeId());
-
+    private boolean isSchedulerPermanentlyDisabledForLocalNode() {
+        // TODO ugh ... this is actually quite hard to decide
+        return false;
     }
 
     private static class CleanupSchedulerPlugin implements SchedulerPlugin {

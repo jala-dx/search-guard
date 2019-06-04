@@ -20,6 +20,7 @@ package com.floragunn.searchsupport.jobs.actions;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 import org.elasticsearch.action.Action;
+import org.elasticsearch.action.ActionListener;
 import org.elasticsearch.client.Client;
 
 public class SchedulerConfigUpdateAction extends Action<SchedulerConfigUpdateResponse> {
@@ -38,10 +39,20 @@ public class SchedulerConfigUpdateAction extends Action<SchedulerConfigUpdateRes
     }
 
     public static void send(Client client, String schedulerName) {
-        SchedulerConfigUpdateResponse response = client.execute(SchedulerConfigUpdateAction.INSTANCE, new SchedulerConfigUpdateRequest(schedulerName))
-                .actionGet();
+        client.execute(SchedulerConfigUpdateAction.INSTANCE, new SchedulerConfigUpdateRequest(schedulerName),
+                new ActionListener<SchedulerConfigUpdateResponse>() {
 
-        log.info("Result of scheduler config update of " + schedulerName + ":\n" + response);
+                    @Override
+                    public void onResponse(SchedulerConfigUpdateResponse response) {
+                        log.info("Result of scheduler config update of " + schedulerName + ":\n" + response);
+
+                    }
+
+                    @Override
+                    public void onFailure(Exception e) {
+                        log.error("Scheduler config update of " + schedulerName + " failed", e);
+                    }
+                });
     }
 
 }

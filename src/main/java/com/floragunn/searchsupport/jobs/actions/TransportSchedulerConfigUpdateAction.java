@@ -88,6 +88,16 @@ public class TransportSchedulerConfigUpdateAction extends
                         "A job store for scheduler name " + request.request.getSchedulerName() + " does not exist");
             }
 
+            String nodeId = jobStore.getNodeId();
+
+            if (nodeId != null && !localNode.getId().equals(nodeId)) {
+                // This may happen if there are several nodes per JVM (e.g., unit tests)
+
+                return new NodeResponse(localNode, NodeResponse.Status.NO_SUCH_JOB_STORE,
+                        "The scheduler with the name " + request.request.getSchedulerName() + " is not configured for this node: " + localNode.getId()
+                                + " vs " + jobStore.getNodeId());
+            }
+
             String status = jobStore.updateJobs();
 
             return new NodeResponse(localNode, NodeResponse.Status.SUCCESS, status);

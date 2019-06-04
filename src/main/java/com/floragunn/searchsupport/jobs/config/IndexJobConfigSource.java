@@ -5,9 +5,11 @@ import java.util.Iterator;
 
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
+import org.elasticsearch.action.admin.indices.create.CreateIndexRequest;
 import org.elasticsearch.action.search.SearchRequest;
 import org.elasticsearch.action.search.SearchResponse;
 import org.elasticsearch.client.Client;
+import org.elasticsearch.index.IndexNotFoundException;
 import org.elasticsearch.search.SearchHit;
 import org.elasticsearch.search.SearchHits;
 
@@ -72,11 +74,20 @@ public class IndexJobConfigSource<JobType extends JobConfig> implements Iterable
             }
 
             if (this.searchRequest == null) {
-                this.searchRequest = new SearchRequest(indexName);
-                // TODO select only active
-                this.searchResponse = client.search(searchRequest).actionGet();
-                this.searchHits = this.searchResponse.getHits();
-                this.searchHitIterator = this.searchHits.iterator();
+                try {
+                    this.searchRequest = new SearchRequest(indexName);
+                    // TODO select only active
+                    this.searchResponse = client.search(searchRequest).actionGet();
+                    this.searchHits = this.searchResponse.getHits();
+                    this.searchHitIterator = this.searchHits.iterator();
+                } catch (IndexNotFoundException e) {
+                    // TODO settings for index?
+                    // TODO really good here? Maybe let REST actions create index and skip this silently?
+                    client.admin().indices().create(new CreateIndexRequest(indexName)).actionGet();
+
+                    this.done = true;
+                    return;
+                }
             }
 
             while (this.current == null && this.searchHitIterator.hasNext()) {
