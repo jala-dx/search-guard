@@ -46,6 +46,7 @@ import org.elasticsearch.env.NodeEnvironment;
 import org.elasticsearch.index.IndexService;
 import org.elasticsearch.rest.RestController;
 import org.elasticsearch.rest.RestHandler;
+import org.elasticsearch.script.ScriptContext;
 import org.elasticsearch.script.ScriptService;
 import org.elasticsearch.threadpool.ThreadPool;
 import org.elasticsearch.watcher.ResourceWatcherService;
@@ -169,7 +170,31 @@ public class ReflectionHelper {
             return Collections.emptyList();
         }
     }
+    
+    /**
+     * TODO ugly
+     * @param className
+     * @return
+     */
+    @SuppressWarnings("unchecked")
+    public static List<ScriptContext<?>> getContexts(final String className) {
+        try {
+            final Class<?> clazz = Class.forName(className);
 
+            return (List<ScriptContext<?>>) clazz.getDeclaredMethod("getContexts").invoke(null);
+
+        } catch (final Throwable e) {
+            log.warn("Unable to retrieve contexts from {} due to {}", className,
+                    e instanceof InvocationTargetException ? ((InvocationTargetException) e).getTargetException().toString() : e.toString());
+            if (log.isDebugEnabled()) {
+                log.debug("Stacktrace: ", e);
+            }
+            return Collections.emptyList();
+        }
+    }
+    
+    
+    
     @SuppressWarnings("rawtypes")
     public static Constructor instantiateDlsFlsConstructor() {
 

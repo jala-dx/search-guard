@@ -89,10 +89,12 @@ import org.elasticsearch.index.shard.SearchOperationListener;
 import org.elasticsearch.indices.breaker.CircuitBreakerService;
 import org.elasticsearch.plugins.ClusterPlugin;
 import org.elasticsearch.plugins.MapperPlugin;
+import org.elasticsearch.plugins.ScriptPlugin;
 import org.elasticsearch.repositories.RepositoriesService;
 import org.elasticsearch.rest.RestController;
 import org.elasticsearch.rest.RestHandler;
 import org.elasticsearch.rest.RestStatus;
+import org.elasticsearch.script.ScriptContext;
 import org.elasticsearch.script.ScriptService;
 import org.elasticsearch.search.internal.ScrollContext;
 import org.elasticsearch.search.internal.SearchContext;
@@ -162,7 +164,7 @@ import com.floragunn.searchguard.user.User;
 import com.floragunn.searchsupport.jobs.actions.SchedulerActions;
 import com.google.common.collect.Lists;
 
-public final class SearchGuardPlugin extends SearchGuardSSLPlugin implements ClusterPlugin, MapperPlugin {
+public final class SearchGuardPlugin extends SearchGuardSSLPlugin implements ClusterPlugin, MapperPlugin, ScriptPlugin {
 
     private static final String KEYWORD = ".keyword";
     private final boolean dlsFlsAvailable;
@@ -468,6 +470,15 @@ public final class SearchGuardPlugin extends SearchGuardSSLPlugin implements Clu
         actions.addAll(SchedulerActions.getActions());
 
         return actions;
+    }
+
+    @Override
+    public List<ScriptContext<?>> getContexts() {
+        ArrayList<ScriptContext<?>> result = new ArrayList<>();
+
+        result.addAll(ReflectionHelper.getContexts("com.floragunn.lastalert.LastAlert"));
+
+        return result;
     }
 
     private CheckedFunction<DirectoryReader, DirectoryReader, IOException> loadFlsDlsIndexSearcherWrapper(final IndexService indexService, final ComplianceIndexingOperationListener ciol,
