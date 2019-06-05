@@ -20,6 +20,7 @@ import org.quartz.TriggerBuilder;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.TextNode;
+import com.floragunn.searchsupport.util.JacksonTools;
 import com.jayway.jsonpath.Configuration;
 import com.jayway.jsonpath.JsonPath;
 import com.jayway.jsonpath.ReadContext;
@@ -83,7 +84,7 @@ public abstract class AbstractJobConfigFactory<JobConfigType extends JobConfig> 
 
     protected Map<String, Object> getJobDataMap(ReadContext ctx) {
         if (this.jobDataPath != null) {
-            return ctx.read(jobDataPath, MAP_TYPE_REF);
+            return JacksonTools.toMap(ctx.read(jobDataPath, JsonNode.class));
         } else {
             return Collections.emptyMap();
         }
@@ -140,7 +141,7 @@ public abstract class AbstractJobConfigFactory<JobConfigType extends JobConfig> 
 
         return TriggerBuilder.newTrigger().withIdentity(jobKey.getName() + "___" + triggerKey, group).forJob(jobKey)
                 .withSchedule(CronScheduleBuilder.cronSchedule(cronExpression)).build();
-    }
+    }   
 
     public String getGroup() {
         return group;

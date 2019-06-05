@@ -3,8 +3,9 @@ package com.floragunn.searchsupport.jobs;
 import java.lang.management.ManagementFactory;
 import java.lang.management.ThreadInfo;
 import java.lang.management.ThreadMXBean;
-import java.util.Arrays;
-import java.util.Collection;
+import java.security.AccessController;
+import java.security.PrivilegedActionException;
+import java.security.PrivilegedExceptionAction;
 import java.util.Collections;
 import java.util.Date;
 import java.util.HashMap;
@@ -14,16 +15,13 @@ import java.util.Set;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
-import java.util.stream.StreamSupport;
 
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
+import org.elasticsearch.SpecialPermission;
 import org.elasticsearch.client.Client;
-import org.elasticsearch.cluster.node.DiscoveryNode;
 import org.elasticsearch.cluster.service.ClusterService;
-import org.elasticsearch.common.Booleans;
 import org.elasticsearch.common.component.LifecycleListener;
-import org.elasticsearch.common.regex.Regex;
 import org.elasticsearch.common.settings.Settings;
 import org.elasticsearch.env.NodeEnvironment;
 import org.quartz.Calendar;
@@ -49,7 +47,6 @@ import org.quartz.spi.JobStore;
 import org.quartz.spi.SchedulerPlugin;
 import org.quartz.spi.ThreadPool;
 
-import com.carrotsearch.hppc.ObjectHashSet;
 import com.floragunn.searchsupport.jobs.cluster.DistributedJobStore;
 import com.floragunn.searchsupport.jobs.cluster.JobDistributor;
 import com.floragunn.searchsupport.jobs.cluster.NodeComparator;
@@ -58,8 +55,6 @@ import com.floragunn.searchsupport.jobs.config.IndexJobConfigSource;
 import com.floragunn.searchsupport.jobs.config.JobConfig;
 import com.floragunn.searchsupport.jobs.config.JobConfigFactory;
 import com.floragunn.searchsupport.jobs.core.IndexJobStateStore;
-
-import joptsimple.internal.Strings;
 
 public class SchedulerBuilder<JobType extends JobConfig> {
     private final static Logger log = LogManager.getLogger(SchedulerBuilder.class);
@@ -209,7 +204,26 @@ public class SchedulerBuilder<JobType extends JobConfig> {
 
         schedulerPluginMap.put(CleanupSchedulerPlugin.class.getName(), new CleanupSchedulerPlugin(clusterService, jobDistributor, jobStore));
 
-        DirectSchedulerFactory.getInstance().createScheduler(name, name, threadPool, jobStore, schedulerPluginMap, null, -1, -1, -1, false, null);
+        // TODO reduce scope of privileged execution
+        try {
+            final SecurityManager sm = System.getSecurityManager();
+
+            if (sm != null) {
+                sm.checkPermission(new SpecialPermission());
+            }
+
+            AccessController.doPrivileged((PrivilegedExceptionAction<Void>) () -> {
+                DirectSchedulerFactory.getInstance().createScheduler(name, name, threadPool, jobStore, schedulerPluginMap, null, -1, -1, -1, false,
+                        null);
+                return null;
+            });
+        } catch (PrivilegedActionException e) {
+            if (e.getCause() instanceof SchedulerException) {
+                throw (SchedulerException) e.getCause();
+            } else {
+                throw new RuntimeException(e);
+            }
+        }
 
         // TODO well, change this somehow:
 
