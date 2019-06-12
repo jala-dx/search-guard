@@ -148,6 +148,44 @@ public class ReflectionHelper {
         }
     }
 
+    // XXX Pfusch
+    @SuppressWarnings("unchecked")
+    public static Collection<RestHandler> instantiateRestApiHandler(final String className, final Settings settings, final Path configPath,
+            final RestController restController, final Client localClient, final AdminDNs adminDns, final ConfigurationRepository cr,
+            final ClusterService cs, ScriptService scriptService, NamedXContentRegistry xContentRegistry, final PrincipalExtractor principalExtractor,
+            final PrivilegesEvaluator evaluator, final ThreadPool threadPool, final AuditLog auditlog) {
+
+        try {
+            final Class<?> clazz = Class.forName(className);
+            Collection<RestHandler> result;
+            try {
+                result = (Collection<RestHandler>) clazz.getDeclaredMethod("getHandler", Settings.class, Path.class, RestController.class,
+                        Client.class, AdminDNs.class, ConfigurationRepository.class, ClusterService.class, PrincipalExtractor.class,
+                        PrivilegesEvaluator.class, ThreadPool.class, AuditLog.class).invoke(null, settings, configPath, restController, localClient,
+                                adminDns, cr, cs, principalExtractor, evaluator, threadPool, auditlog);
+            } catch (NoSuchMethodException e) {
+                result = (Collection<RestHandler>) clazz
+                        .getDeclaredMethod("getHandler", Settings.class, Path.class, RestController.class, Client.class, ClusterService.class,
+                                ScriptService.class, NamedXContentRegistry.class, ThreadPool.class)
+                        .invoke(null, settings, configPath, restController, localClient, cs, scriptService, xContentRegistry, threadPool);
+            }
+            addLoadedModule(clazz);
+
+            if (log.isDebugEnabled()) {
+                log.debug("Found " + result.size() + " REST API handlers in " + className);
+            }
+
+            return result;
+        } catch (final Throwable e) {
+            log.warn("Unable to enable REST API module {} due to {}", className,
+                    e instanceof InvocationTargetException ? ((InvocationTargetException) e).getTargetException().toString() : e.toString());
+            if (log.isDebugEnabled()) {
+                log.debug("Stacktrace: ", e);
+            }
+            return Collections.emptyList();
+        }
+    }
+
     /**
      * TODO ugly
      * @param className
@@ -170,7 +208,7 @@ public class ReflectionHelper {
             return Collections.emptyList();
         }
     }
-    
+
     /**
      * TODO ugly
      * @param className
@@ -192,9 +230,7 @@ public class ReflectionHelper {
             return Collections.emptyList();
         }
     }
-    
-    
-    
+
     @SuppressWarnings("rawtypes")
     public static Constructor instantiateDlsFlsConstructor() {
 
