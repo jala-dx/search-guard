@@ -20,7 +20,9 @@ import com.fasterxml.jackson.databind.node.TextNode;
 
 public class JacksonTools {
     public static Map<String, Object> toMap(JsonNode jsonNode) {
-        if (jsonNode instanceof ObjectNode) {
+        if (jsonNode == null) {
+            return null;
+        } else if (jsonNode instanceof ObjectNode) {
             ObjectNode objectNode = (ObjectNode) jsonNode;
             Map<String, Object> result = new HashMap<>(objectNode.size());
             Iterator<Map.Entry<String, JsonNode>> iter = objectNode.fields();
@@ -42,7 +44,9 @@ public class JacksonTools {
     }
 
     public static Object toObject(JsonNode jsonNode) {
-        if (jsonNode instanceof ObjectNode) {
+        if (jsonNode == null) {
+            return null;
+        } else if (jsonNode instanceof ObjectNode) {
             return toMap(jsonNode);
         } else if (jsonNode instanceof ArrayNode) {
             ArrayNode arrayNode = (ArrayNode) jsonNode;
