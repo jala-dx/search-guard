@@ -10,8 +10,10 @@ import org.elasticsearch.action.search.SearchRequest;
 import org.elasticsearch.action.search.SearchResponse;
 import org.elasticsearch.client.Client;
 import org.elasticsearch.index.IndexNotFoundException;
+import org.elasticsearch.index.query.QueryBuilders;
 import org.elasticsearch.search.SearchHit;
 import org.elasticsearch.search.SearchHits;
+import org.elasticsearch.search.builder.SearchSourceBuilder;
 
 import com.floragunn.searchsupport.jobs.cluster.JobDistributor;
 import com.google.common.collect.Iterators;
@@ -76,7 +78,8 @@ public class IndexJobConfigSource<JobType extends JobConfig> implements Iterable
             if (this.searchRequest == null) {
                 try {
                     this.searchRequest = new SearchRequest(indexName);
-                    // TODO select only active
+                    this.searchRequest
+                            .source(new SearchSourceBuilder().query(QueryBuilders.boolQuery().mustNot(QueryBuilders.termQuery("active", false))));
                     this.searchResponse = client.search(searchRequest).actionGet();
                     this.searchHits = this.searchResponse.getHits();
                     this.searchHitIterator = this.searchHits.iterator();
