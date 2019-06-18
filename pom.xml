@@ -34,7 +34,7 @@
   </licenses>
 
   <properties>
-    <enterprise-modules.version>7.3-enterprise-HEAD-SNAPSHOT</enterprise-modules.version>
+    <enterprise-modules.version>7.x-enterprise-SCHEDULER-SNAPSHOT</enterprise-modules.version>
     <elasticsearch.version>7.3.0</elasticsearch.version>
     
     <!-- deps -->
