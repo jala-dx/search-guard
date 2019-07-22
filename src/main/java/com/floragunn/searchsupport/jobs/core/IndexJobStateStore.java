@@ -24,7 +24,6 @@ import org.elasticsearch.action.index.IndexRequest;
 import org.elasticsearch.action.search.SearchResponse;
 import org.elasticsearch.client.Client;
 import org.elasticsearch.cluster.ClusterChangedEvent;
-import org.elasticsearch.cluster.block.ClusterBlockLevel;
 import org.elasticsearch.cluster.service.ClusterService;
 import org.elasticsearch.common.xcontent.ToXContent;
 import org.elasticsearch.common.xcontent.ToXContentObject;
@@ -106,7 +105,7 @@ public class IndexJobStateStore<JobType extends com.floragunn.searchsupport.jobs
     private final Table<String, JobKey, InternalJobDetail> groupAndKeyToJobMap = HashBasedTable.create();
     private final Table<String, TriggerKey, InternalOperableTrigger> groupAndKeyToTriggerMap = HashBasedTable.create();
     // TODO check for changes that make TreeSet inconsistent
-    private final TreeSet<InternalOperableTrigger> activeTriggers = new TreeSet<InternalOperableTrigger>(new Trigger.TriggerTimeComparator());
+    private final ActiveTriggerQueue activeTriggers = new ActiveTriggerQueue();
     private final Set<String> pausedTriggerGroups = new HashSet<String>();
     private final Set<String> pausedJobGroups = new HashSet<String>();
     private final Set<JobKey> blockedJobs = new HashSet<JobKey>();
@@ -149,10 +148,10 @@ public class IndexJobStateStore<JobType extends com.floragunn.searchsupport.jobs
         schedulerToJobStoreMap.put(schedulerName, this);
 
         // XXX argh, this is too early and throws an AssertionError. For now, we just skip this initialization for schedulers having a cluster service instance
-       // if (clusterService != null && clusterService.state().blocks().hasGlobalBlockWithLevel(ClusterBlockLevel.READ)) {
-       //     return;
-       // }
-        
+        // if (clusterService != null && clusterService.state().blocks().hasGlobalBlockWithLevel(ClusterBlockLevel.READ)) {
+        //     return;
+        // }
+
         if (clusterService != null) {
             return;
         }
@@ -738,11 +737,13 @@ public class IndexJobStateStore<JobType extends com.floragunn.searchsupport.jobs
 
             long batchEnd = noLaterThan;
 
-            for (InternalOperableTrigger trigger = activeTriggers.pollFirst(); trigger != null
-                    && result.size() < maxCount; trigger = activeTriggers.pollFirst()) {
-                if (trigger.getNextFireTime() == null) {
+            for (ActiveTrigger activeTrigger = activeTriggers.pollFirst(); activeTrigger != null
+                    && result.size() < maxCount; activeTrigger = activeTriggers.pollFirst()) {
+                if (activeTrigger.getNextFireTime() == null) {
                     continue;
                 }
+
+                InternalOperableTrigger trigger = activeTrigger.delegate;
 
                 if (checkForMisfire(trigger, misfireIsBefore)) {
                     if (trigger.getNextFireTime() != null) {
@@ -752,7 +753,7 @@ public class IndexJobStateStore<JobType extends com.floragunn.searchsupport.jobs
                     continue;
                 }
 
-                if (trigger.getNextFireTime().getTime() > batchEnd) {
+                if (activeTrigger.getNextFireTime().getTime() > batchEnd) {
                     activeTriggers.add(trigger);
                     break;
                 }
@@ -773,7 +774,7 @@ public class IndexJobStateStore<JobType extends com.floragunn.searchsupport.jobs
                 // tw.trigger.setFireInstanceId(getFiredTriggerRecordId()); TODO
 
                 if (result.isEmpty()) {
-                    batchEnd = Math.max(trigger.getNextFireTime().getTime(), System.currentTimeMillis()) + timeWindow;
+                    batchEnd = Math.max(activeTrigger.getNextFireTime().getTime(), System.currentTimeMillis()) + timeWindow;
                 }
 
                 result.add(trigger);
@@ -2102,6 +2103,182 @@ public class IndexJobStateStore<JobType extends com.floragunn.searchsupport.jobs
 
         public void setJobDetail(InternalJobDetail jobDetail) {
             this.jobDetail = jobDetail;
+        }
+
+    }
+
+    static class ActiveTriggerQueue {
+        private final TreeSet<ActiveTrigger> queue = new TreeSet<ActiveTrigger>(ActiveTrigger.COMPARATOR);
+        private final Map<TriggerKey, ActiveTrigger> keyToActiveTriggerMap = new HashMap<>();
+
+        void add(InternalOperableTrigger trigger) {
+            ActiveTrigger activeTrigger = new ActiveTrigger(trigger);
+
+            ActiveTrigger oldActiveTrigger = keyToActiveTriggerMap.put(trigger.getKey(), activeTrigger);
+
+            if (oldActiveTrigger != null) {
+                queue.remove(oldActiveTrigger);
+            }
+
+            queue.add(activeTrigger);
+        }
+
+        void addAll(Collection<InternalOperableTrigger> triggers) {
+            for (InternalOperableTrigger trigger : triggers) {
+                add(trigger);
+            }
+        }
+
+        void remove(InternalOperableTrigger trigger) {
+
+            ActiveTrigger oldActiveTrigger = keyToActiveTriggerMap.remove(trigger.getKey());
+
+            if (oldActiveTrigger != null) {
+                queue.remove(oldActiveTrigger);
+            }
+        }
+
+        boolean isEmpty() {
+            return this.queue.isEmpty();
+        }
+
+        int size() {
+            return this.queue.size();
+        }
+
+        ActiveTrigger pollFirst() {
+            ActiveTrigger result = queue.pollFirst();
+
+            if (result != null) {
+                keyToActiveTriggerMap.remove(result.getKey());
+            }
+
+            return result;
+        }
+
+        void clear() {
+            queue.clear();
+            keyToActiveTriggerMap.clear();
+        }
+    }
+
+    static class ActiveTrigger implements Trigger {
+
+        private static final long serialVersionUID = -4666180063413542273L;
+
+        final static TriggerTimeComparator COMPARATOR = new TriggerTimeComparator();
+
+        private final InternalOperableTrigger delegate;
+        private final boolean mayFireAgain;
+        private final Date startTime;
+        private final Date endTime;
+        private final Date nextFireTime;
+        private final Date previousFireTime;
+        private final Date finalFireTime;
+
+        ActiveTrigger(InternalOperableTrigger delegate) {
+            this.delegate = delegate;
+            this.mayFireAgain = delegate.mayFireAgain();
+            this.startTime = copyDate(delegate.getStartTime());
+            this.endTime = copyDate(delegate.getEndTime());
+            this.nextFireTime = copyDate(delegate.getNextFireTime());
+            this.previousFireTime = copyDate(delegate.getPreviousFireTime());
+            this.finalFireTime = copyDate(delegate.getFinalFireTime());
+        }
+
+        @Override
+        public TriggerKey getKey() {
+            return this.delegate.getKey();
+        }
+
+        @Override
+        public JobKey getJobKey() {
+            return this.delegate.getJobKey();
+        }
+
+        @Override
+        public String getDescription() {
+            return this.delegate.getDescription();
+        }
+
+        @Override
+        public String getCalendarName() {
+            return this.delegate.getCalendarName();
+
+        }
+
+        @Override
+        public JobDataMap getJobDataMap() {
+            return this.delegate.getJobDataMap();
+
+        }
+
+        @Override
+        public int getPriority() {
+            return this.delegate.getPriority();
+        }
+
+        @Override
+        public boolean mayFireAgain() {
+            return this.mayFireAgain;
+        }
+
+        @Override
+        public Date getStartTime() {
+            return this.startTime;
+        }
+
+        @Override
+        public Date getEndTime() {
+            return this.endTime;
+        }
+
+        @Override
+        public Date getNextFireTime() {
+            return this.nextFireTime;
+        }
+
+        @Override
+        public Date getPreviousFireTime() {
+            return this.previousFireTime;
+        }
+
+        @Override
+        public Date getFireTimeAfter(Date afterTime) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public Date getFinalFireTime() {
+            return this.finalFireTime;
+        }
+
+        @Override
+        public int getMisfireInstruction() {
+            return this.delegate.getMisfireInstruction();
+        }
+
+        @Override
+        public TriggerBuilder<? extends Trigger> getTriggerBuilder() {
+            return this.delegate.getTriggerBuilder();
+        }
+
+        @Override
+        public ScheduleBuilder<? extends Trigger> getScheduleBuilder() {
+            return this.delegate.getScheduleBuilder();
+        }
+
+        @Override
+        public int compareTo(Trigger other) {
+            return COMPARATOR.compare(this, other);
+        }
+
+        private static Date copyDate(Date date) {
+            if (date != null) {
+                return new Date(date.getTime());
+            } else {
+                return null;
+            }
         }
 
     }
