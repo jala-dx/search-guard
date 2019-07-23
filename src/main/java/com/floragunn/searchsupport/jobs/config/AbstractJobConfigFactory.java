@@ -1,6 +1,7 @@
 package com.floragunn.searchsupport.jobs.config;
 
 import java.text.ParseException;
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
@@ -14,12 +15,14 @@ import org.quartz.JobBuilder;
 import org.quartz.JobDataMap;
 import org.quartz.JobDetail;
 import org.quartz.JobKey;
+import org.quartz.SimpleScheduleBuilder;
 import org.quartz.Trigger;
 import org.quartz.TriggerBuilder;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.TextNode;
+import com.floragunn.searchsupport.util.DurationFormat;
 import com.floragunn.searchsupport.util.JacksonTools;
 import com.jayway.jsonpath.Configuration;
 import com.jayway.jsonpath.JsonPath;
@@ -36,7 +39,9 @@ public abstract class AbstractJobConfigFactory<JobConfigType extends JobConfig> 
     protected String descriptionPath = "$.description";
     protected String durablePath = "$.durable";
     protected String cronScheduleTriggerPath = "$.trigger.schedule.cron";
+    protected String intervalScheduleTriggerPath = "$.trigger.schedule.interval";
     protected String jobDataPath = "$";
+
     protected final static Configuration JSON_PATH_CONFIG = Configuration.builder().options(com.jayway.jsonpath.Option.SUPPRESS_EXCEPTIONS)
             .jsonProvider(new JacksonJsonNodeJsonProvider()).mappingProvider(new JacksonMappingProvider()).build();
     protected final static TypeRef<Map<String, Object>> MAP_TYPE_REF = new TypeRef<Map<String, Object>>() {
@@ -107,6 +112,12 @@ public abstract class AbstractJobConfigFactory<JobConfigType extends JobConfig> 
             triggers.addAll(getCronScheduleTriggers(jobKey, cronScheduleTriggers));
         }
 
+        Object intervalScheduleTriggers = ctx.read(intervalScheduleTriggerPath);
+
+        if (intervalScheduleTriggers != null) {
+            triggers.addAll(getIntervalScheduleTriggers(jobKey, intervalScheduleTriggers));
+        }
+
         return triggers;
     }
 
@@ -132,6 +143,24 @@ public abstract class AbstractJobConfigFactory<JobConfigType extends JobConfig> 
         return result;
     }
 
+    protected List<Trigger> getIntervalScheduleTriggers(JobKey jobKey, Object scheduleTriggers) throws ParseException {
+        List<Trigger> result = new ArrayList<>();
+
+        if (scheduleTriggers instanceof TextNode) {
+            result.add(createIntervalScheduleTrigger(jobKey, ((TextNode) scheduleTriggers).textValue()));
+        } else if (scheduleTriggers instanceof ArrayNode) {
+            for (JsonNode trigger : (ArrayNode) scheduleTriggers) {
+                String triggerDef = trigger.textValue();
+
+                if (triggerDef != null) {
+                    result.add(createIntervalScheduleTrigger(jobKey, triggerDef));
+                }
+            }
+        }
+
+        return result;
+    }
+
     protected String getTriggerKey(String trigger) {
         return DigestUtils.md5Hex(trigger);
     }
@@ -141,7 +170,15 @@ public abstract class AbstractJobConfigFactory<JobConfigType extends JobConfig> 
 
         return TriggerBuilder.newTrigger().withIdentity(jobKey.getName() + "___" + triggerKey, group).forJob(jobKey)
                 .withSchedule(CronScheduleBuilder.cronSchedule(cronExpression)).build();
-    }   
+    }
+
+    protected Trigger createIntervalScheduleTrigger(JobKey jobKey, String interval) throws ParseException {
+        String triggerKey = getTriggerKey(interval);
+        Duration duration = DurationFormat.INSTANCE.parse(interval);
+
+        return TriggerBuilder.newTrigger().withIdentity(jobKey.getName() + "___" + triggerKey, group).forJob(jobKey)
+                .withSchedule(SimpleScheduleBuilder.simpleSchedule().repeatForever().withIntervalInMilliseconds(duration.toMillis())).build();
+    }
 
     public String getGroup() {
         return group;
@@ -181,6 +218,14 @@ public abstract class AbstractJobConfigFactory<JobConfigType extends JobConfig> 
 
     public void setCronScheduleTriggerPath(String cronScheduleTriggerPath) {
         this.cronScheduleTriggerPath = cronScheduleTriggerPath;
+    }
+
+    public String getIntervalScheduleTriggerPath() {
+        return intervalScheduleTriggerPath;
+    }
+
+    public void setIntervalScheduleTriggerPath(String intervalScheduleTriggerPath) {
+        this.intervalScheduleTriggerPath = intervalScheduleTriggerPath;
     }
 
 }
