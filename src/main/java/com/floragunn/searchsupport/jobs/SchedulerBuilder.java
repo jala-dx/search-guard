@@ -178,7 +178,6 @@ public class SchedulerBuilder<JobType extends JobConfig> {
         }
 
         if (this.jobDistributor == null && clusterService != null) {
-
             this.jobDistributor = new JobDistributor(name, nodeFilter, clusterService, null, this.nodeComparator);
         }
 

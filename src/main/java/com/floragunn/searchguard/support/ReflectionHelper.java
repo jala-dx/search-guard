@@ -34,6 +34,8 @@ import java.util.jar.Manifest;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 import org.elasticsearch.ElasticsearchException;
+import org.elasticsearch.action.ActionRequest;
+import org.elasticsearch.action.ActionResponse;
 import org.elasticsearch.client.Client;
 import org.elasticsearch.cluster.metadata.IndexNameExpressionResolver;
 import org.elasticsearch.cluster.service.ClusterService;
@@ -44,6 +46,7 @@ import org.elasticsearch.common.xcontent.NamedXContentRegistry;
 import org.elasticsearch.env.Environment;
 import org.elasticsearch.env.NodeEnvironment;
 import org.elasticsearch.index.IndexService;
+import org.elasticsearch.plugins.ActionPlugin.ActionHandler;
 import org.elasticsearch.rest.RestController;
 import org.elasticsearch.rest.RestHandler;
 import org.elasticsearch.script.ScriptContext;
@@ -223,6 +226,28 @@ public class ReflectionHelper {
 
         } catch (final Throwable e) {
             log.warn("Unable to retrieve contexts from {} due to {}", className,
+                    e instanceof InvocationTargetException ? ((InvocationTargetException) e).getTargetException().toString() : e.toString());
+            if (log.isDebugEnabled()) {
+                log.debug("Stacktrace: ", e);
+            }
+            return Collections.emptyList();
+        }
+    }
+
+    /**
+     * TODO ugly
+     * @param className
+     * @return
+     */
+    @SuppressWarnings("unchecked")
+    public static List<ActionHandler<? extends ActionRequest, ? extends ActionResponse>> getActions(String className) {
+        try {
+            final Class<?> clazz = Class.forName(className);
+
+            return (List<ActionHandler<? extends ActionRequest, ? extends ActionResponse>>) clazz.getDeclaredMethod("getActions").invoke(null);
+
+        } catch (final Throwable e) {
+            log.warn("Unable to retrieve actions from {} due to {}", className,
                     e instanceof InvocationTargetException ? ((InvocationTargetException) e).getTargetException().toString() : e.toString());
             if (log.isDebugEnabled()) {
                 log.debug("Stacktrace: ", e);
