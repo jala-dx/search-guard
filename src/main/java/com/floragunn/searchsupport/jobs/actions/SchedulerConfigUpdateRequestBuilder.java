@@ -31,7 +31,7 @@ public class SchedulerConfigUpdateRequestBuilder
         super(client, action, new SchedulerConfigUpdateRequest());
     }
 
-    public SchedulerConfigUpdateRequestBuilder setShardId(final String schedulerName) {
+    public SchedulerConfigUpdateRequestBuilder setSchedulerName(final String schedulerName) {
         request().setSchedulerName(schedulerName);
         return this;
     }
