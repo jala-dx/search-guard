@@ -104,7 +104,6 @@ public class IndexJobStateStore<JobType extends com.floragunn.searchsupport.jobs
     private final Map<TriggerKey, InternalOperableTrigger> keyToTriggerMap = new HashMap<>();
     private final Table<String, JobKey, InternalJobDetail> groupAndKeyToJobMap = HashBasedTable.create();
     private final Table<String, TriggerKey, InternalOperableTrigger> groupAndKeyToTriggerMap = HashBasedTable.create();
-    // TODO check for changes that make TreeSet inconsistent
     private final ActiveTriggerQueue activeTriggers = new ActiveTriggerQueue();
     private final Set<String> pausedTriggerGroups = new HashSet<String>();
     private final Set<String> pausedJobGroups = new HashSet<String>();
