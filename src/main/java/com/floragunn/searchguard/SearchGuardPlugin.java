@@ -473,7 +473,7 @@ public final class SearchGuardPlugin extends SearchGuardSSLPlugin implements Clu
         // TODO disable scheduling? Other way of hooking in?
 
         actions.addAll(SchedulerActions.getActions());
-        actions.addAll(ReflectionHelper.getActions("com.floragunn.signals.LastAlert"));
+        actions.addAll(ReflectionHelper.getActions("com.floragunn.signals.Signals"));
 
         return actions;
     }
@@ -482,7 +482,7 @@ public final class SearchGuardPlugin extends SearchGuardSSLPlugin implements Clu
     public List<ScriptContext<?>> getContexts() {
         ArrayList<ScriptContext<?>> result = new ArrayList<>();
 
-        result.addAll(ReflectionHelper.getContexts("com.floragunn.signals.LastAlert"));
+        result.addAll(ReflectionHelper.getContexts("com.floragunn.signals.Signals"));
 
         return result;
     }
@@ -1048,7 +1048,7 @@ public final class SearchGuardPlugin extends SearchGuardSSLPlugin implements Clu
             settings.add(
                     Setting.boolSetting(ConfigConstants.SEARCHGUARD_UNSUPPORTED_LOAD_STATIC_RESOURCES, true, Property.NodeScope, Property.Filtered));
 
-            settings.addAll(ReflectionHelper.getSettings("com.floragunn.signals.LastAlert"));
+            settings.addAll(ReflectionHelper.getSettings("com.floragunn.signals.Signals"));
 
         }
 
