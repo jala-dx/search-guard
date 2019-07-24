@@ -7,12 +7,14 @@ import java.util.Collections;
 import java.util.Date;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
 import java.util.Map.Entry;
 import java.util.Set;
 import java.util.TreeSet;
 import java.util.concurrent.ExecutorService;
+import java.util.concurrent.ScheduledThreadPoolExecutor;
 import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
 import java.util.function.Function;
@@ -20,6 +22,7 @@ import java.util.stream.Collectors;
 
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
+import org.elasticsearch.action.ActionListener;
 import org.elasticsearch.action.index.IndexRequest;
 import org.elasticsearch.action.search.SearchResponse;
 import org.elasticsearch.client.Client;
@@ -71,6 +74,9 @@ import org.quartz.spi.SchedulerSignaler;
 import org.quartz.spi.TriggerFiredBundle;
 import org.quartz.spi.TriggerFiredResult;
 
+import com.floragunn.searchsupport.jobs.actions.CheckForExecutingTriggerAction;
+import com.floragunn.searchsupport.jobs.actions.CheckForExecutingTriggerRequest;
+import com.floragunn.searchsupport.jobs.actions.CheckForExecutingTriggerResponse;
 import com.floragunn.searchsupport.jobs.cluster.DistributedJobStore;
 import com.floragunn.searchsupport.jobs.config.JobConfig;
 import com.floragunn.searchsupport.jobs.config.JobConfigFactory;
@@ -90,7 +96,6 @@ public class IndexJobStateStore<JobType extends com.floragunn.searchsupport.jobs
     private final static Map<String, IndexJobStateStore<?>> schedulerToJobStoreMap = new MapMaker().concurrencyLevel(4).weakValues().makeMap();
 
     public static IndexJobStateStore<?> getInstanceBySchedulerName(String schedulerName) {
-        log.info(schedulerToJobStoreMap);
         return schedulerToJobStoreMap.get(schedulerName);
     }
 
@@ -108,6 +113,7 @@ public class IndexJobStateStore<JobType extends com.floragunn.searchsupport.jobs
     private final Set<String> pausedTriggerGroups = new HashSet<String>();
     private final Set<String> pausedJobGroups = new HashSet<String>();
     private final Set<JobKey> blockedJobs = new HashSet<JobKey>();
+    private final Set<InternalOperableTrigger> triggersStillExecutingOnOtherNodes = new HashSet<>();
     private final Iterable<JobType> jobConfigSource;
     private final JobConfigFactory<JobType> jobFactory;
     private volatile boolean shutdown = false;
@@ -116,6 +122,7 @@ public class IndexJobStateStore<JobType extends com.floragunn.searchsupport.jobs
     private ThreadLocal<Set<InternalOperableTrigger>> dirtyTriggers = ThreadLocal.withInitial(() -> new HashSet<>());
     private final ExecutorService configChangeExecutor = new ThreadPoolExecutor(1, 1, 0L, TimeUnit.MILLISECONDS,
             new SingleElementBlockingQueue<Runnable>());
+    private final ScheduledThreadPoolExecutor periodicMaintenanceExecutor = new ScheduledThreadPoolExecutor(1);
     private final ClusterService clusterService;
 
     public IndexJobStateStore(String schedulerName, String indexName, String nodeId, Client client, Iterable<JobType> jobConfigSource,
@@ -1181,6 +1188,7 @@ public class IndexJobStateStore<JobType extends com.floragunn.searchsupport.jobs
 
     private void initJobs() {
         Collection<InternalJobDetail> jobs = this.loadJobs();
+        boolean triggersStillExecutingOnOtherNodesExist = false;
 
         synchronized (this) {
             resetJobs();
@@ -1191,17 +1199,27 @@ public class IndexJobStateStore<JobType extends com.floragunn.searchsupport.jobs
 
             initActiveTriggers();
 
+            if (triggersStillExecutingOnOtherNodes.size() > 0) {
+                triggersStillExecutingOnOtherNodesExist = true;
+            }
+
             log.info("Scheduler " + schedulerName + " is initialized. Jobs: " + jobs.size() + " Active Triggers: " + activeTriggers.size());
         }
 
         initialized = true;
 
         flushDirtyTriggersToIndex();
+
+        if (triggersStillExecutingOnOtherNodesExist) {
+            periodicMaintenanceExecutor.getQueue().clear();
+            periodicMaintenanceExecutor.schedule(() -> checkTriggersStillExecutingOnOtherNodes(), 10, TimeUnit.SECONDS);
+        }
     }
 
     private void updateAfterClusterConfigChange() {
         try {
             log.info("Reinitializing jobs for " + IndexJobStateStore.this);
+            periodicMaintenanceExecutor.getQueue().clear();
             initJobs();
             signaler.signalSchedulingChange(0L);
         } catch (Exception e) {
@@ -1448,6 +1466,117 @@ public class IndexJobStateStore<JobType extends com.floragunn.searchsupport.jobs
         return internalJobDetail;
     }
 
+    private void checkTriggersStillExecutingOnOtherNodes() {
+        Set<TriggerKey> triggerKeys;
+
+        synchronized (this) {
+            if (this.triggersStillExecutingOnOtherNodes.isEmpty()) {
+                return;
+            }
+
+            triggerKeys = new HashSet<>();
+            Iterator<InternalOperableTrigger> iter = this.triggersStillExecutingOnOtherNodes.iterator();
+
+            while (iter.hasNext()) {
+                InternalOperableTrigger trigger = iter.next();
+
+                if (trigger.getState() == InternalOperableTrigger.State.EXECUTING) {
+                    triggerKeys.add(trigger.getKey());
+                } else {
+                    iter.remove();
+                }
+            }
+        }
+
+        if (triggerKeys.isEmpty()) {
+            return;
+        }
+
+        ArrayList<String> triggerKeysAsString = new ArrayList<>(triggerKeys.size());
+
+        for (TriggerKey triggerKey : triggerKeys) {
+            triggerKeysAsString.add(triggerKey.toString());
+        }
+
+        client.execute(CheckForExecutingTriggerAction.INSTANCE,
+                new CheckForExecutingTriggerRequest(schedulerName, new ArrayList<>(triggerKeysAsString)),
+                new ActionListener<CheckForExecutingTriggerResponse>() {
+
+                    @Override
+                    public void onResponse(CheckForExecutingTriggerResponse response) {
+                        Set<TriggerKey> triggersToBeReset = new HashSet<>(triggerKeys);
+                        triggersToBeReset.removeAll(response.getAllRunningTriggerKeys());
+
+                        log.info("Triggers to be reset after CheckForExecutingTriggerAction: " + triggersToBeReset);
+
+                        if (triggersToBeReset.size() > 0) {
+                            resetTriggersFormerlyRunningOnOtherNodes(triggersToBeReset);
+                        }
+
+                        if (triggersStillExecutingOnOtherNodes.size() > 0) {
+                            periodicMaintenanceExecutor.getQueue().clear();
+                            periodicMaintenanceExecutor.schedule(() -> checkTriggersStillExecutingOnOtherNodes(), 10, TimeUnit.SECONDS);
+                        }
+                    }
+
+                    @Override
+                    public void onFailure(Exception e) {
+                        log.error("CheckForExecutingTriggerAction failed", e);
+                    }
+                });
+    }
+
+    private void resetTriggersFormerlyRunningOnOtherNodes(Set<TriggerKey> triggersToBeReset) {
+        Map<TriggerKey, InternalOperableTrigger> triggerStates = loadTriggerStatesByTriggerKeys(triggersToBeReset);
+
+        synchronized (this) {
+            for (InternalOperableTrigger refreshedTrigger : triggerStates.values()) {
+                InternalOperableTrigger actualTrigger = this.keyToTriggerMap.get(refreshedTrigger.getKey());
+
+                if (actualTrigger == null) {
+                    log.error("Could not find actualTrigger for " + refreshedTrigger);
+                    continue;
+                }
+
+                this.triggersStillExecutingOnOtherNodes.remove(actualTrigger);
+
+                InternalJobDetail internalJobDetail = actualTrigger.getJobDetail();
+
+                if (actualTrigger.getState() != InternalOperableTrigger.State.EXECUTING) {
+                    // Something has refreshed this before
+                    continue;
+                }
+
+                if (refreshedTrigger.getState() == InternalOperableTrigger.State.EXECUTING) {
+                    if (actualTrigger.getNextFireTime() == null) {
+                        actualTrigger.computeFirstFireTime(null);
+                    }
+                    actualTrigger.node = this.nodeId;
+                    updateTriggerStateToIdle(actualTrigger);
+
+                    // TODO avoid/ignore version conflicts
+
+                } else {
+                    actualTrigger.nextFireTime = refreshedTrigger.nextFireTime;
+                    actualTrigger.state = refreshedTrigger.state;
+                    actualTrigger.previousFireTime = refreshedTrigger.previousFireTime;
+                    actualTrigger.node = this.nodeId;
+                    actualTrigger.timesTriggered = refreshedTrigger.timesTriggered;
+                }
+
+                if (actualTrigger.state == InternalOperableTrigger.State.WAITING) {
+                    if (internalJobDetail.isConcurrentExectionDisallowed()) {
+                        internalJobDetail.deblockTriggers();
+                        signaler.signalSchedulingChange(0L);
+                    }
+                    activeTriggers.add(actualTrigger);
+                }
+            }
+        }
+
+        flushDirtyTriggersToIndex();
+    }
+
     @SuppressWarnings("unchecked")
     private synchronized Map<JobKey, JobType> getLoadedJobConfig() {
         HashMap<JobKey, JobType> result = new HashMap<>(this.keyToJobMap.size());
@@ -1467,7 +1596,7 @@ public class IndexJobStateStore<JobType extends com.floragunn.searchsupport.jobs
             } else {
                 log.info("Trigger " + internalOperableTrigger + " is marked as still executing on node " + internalOperableTrigger.getNode());
 
-                // TODO What to do? Ask the other node if it is still executing? Timeout?
+                this.triggersStillExecutingOnOtherNodes.add(internalOperableTrigger);
             }
             break;
         case ACQUIRED:
@@ -1492,8 +1621,19 @@ public class IndexJobStateStore<JobType extends com.floragunn.searchsupport.jobs
     }
 
     private Map<TriggerKey, InternalOperableTrigger> loadTriggerStates(Set<JobType> jobConfig) {
+        Map<String, TriggerKey> triggerIds = this.getTriggerIds(jobConfig);
+
+        return loadTriggerStates(triggerIds);
+    }
+
+    private Map<TriggerKey, InternalOperableTrigger> loadTriggerStatesByTriggerKeys(Set<TriggerKey> triggerKeys) {
+        Map<String, TriggerKey> triggerIds = this.getTriggerIdsByTriggerKeys(triggerKeys);
+
+        return loadTriggerStates(triggerIds);
+    }
+
+    private Map<TriggerKey, InternalOperableTrigger> loadTriggerStates(Map<String, TriggerKey> triggerIds) {
         try {
-            Map<String, TriggerKey> triggerIds = this.getTriggerIds(jobConfig);
 
             if (triggerIds.isEmpty()) {
                 return Collections.emptyMap();
@@ -1534,6 +1674,16 @@ public class IndexJobStateStore<JobType extends com.floragunn.searchsupport.jobs
             for (Trigger trigger : job.getTriggers()) {
                 result.put(quartzKeyToKeyString(trigger.getKey()), trigger.getKey());
             }
+        }
+
+        return result;
+    }
+
+    private Map<String, TriggerKey> getTriggerIdsByTriggerKeys(Set<TriggerKey> triggerKeys) {
+        Map<String, TriggerKey> result = new HashMap<String, TriggerKey>(triggerKeys.size());
+
+        for (TriggerKey triggerKey : triggerKeys) {
+            result.put(quartzKeyToKeyString(triggerKey), triggerKey);
         }
 
         return result;
@@ -1973,6 +2123,14 @@ public class IndexJobStateStore<JobType extends com.floragunn.searchsupport.jobs
 
             this.state = state;
             markDirty();
+        }
+
+        public void setStateWithoutMarkingDirty(State state) {
+            if (this.state == state) {
+                return;
+            }
+
+            this.state = state;
         }
 
         public void setStateAndNode(State state, String nodeId) {

@@ -9,6 +9,7 @@ import org.elasticsearch.plugins.ActionPlugin.ActionHandler;
 
 public class SchedulerActions {
     public static List<ActionHandler<? extends ActionRequest, ? extends ActionResponse>> getActions() {
-        return Arrays.asList(new ActionHandler<>(SchedulerConfigUpdateAction.INSTANCE, TransportSchedulerConfigUpdateAction.class));
+        return Arrays.asList(new ActionHandler<>(SchedulerConfigUpdateAction.INSTANCE, TransportSchedulerConfigUpdateAction.class),
+                new ActionHandler<>(CheckForExecutingTriggerAction.INSTANCE, TransportCheckForExecutingTriggerAction.class));
     }
 }
