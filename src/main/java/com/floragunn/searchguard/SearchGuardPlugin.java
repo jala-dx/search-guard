@@ -442,7 +442,7 @@ public final class SearchGuardPlugin extends SearchGuardSSLPlugin implements Clu
 
                 handlers.addAll(ReflectionHelper.instantiateMngtRestApiHandler(settings, configPath, restController, localClient, adminDns, cr, cs,
                         Objects.requireNonNull(principalExtractor), evaluator, threadPool, Objects.requireNonNull(auditLog)));
-                handlers.addAll(ReflectionHelper.instantiateRestApiHandler("com.floragunn.lastalert.api.LastAlertApiActions", settings, configPath,
+                handlers.addAll(ReflectionHelper.instantiateRestApiHandler("com.floragunn.signals.api.LastAlertApiActions", settings, configPath,
                         restController, localClient, adminDns, cr, cs, scriptService, xContentRegistry, principalExtractor, evaluator, threadPool,
                         auditLog));
             }
@@ -473,7 +473,7 @@ public final class SearchGuardPlugin extends SearchGuardSSLPlugin implements Clu
         // TODO disable scheduling? Other way of hooking in?
 
         actions.addAll(SchedulerActions.getActions());
-        actions.addAll(ReflectionHelper.getActions("com.floragunn.lastalert.LastAlert"));
+        actions.addAll(ReflectionHelper.getActions("com.floragunn.signals.LastAlert"));
 
         return actions;
     }
@@ -482,7 +482,7 @@ public final class SearchGuardPlugin extends SearchGuardSSLPlugin implements Clu
     public List<ScriptContext<?>> getContexts() {
         ArrayList<ScriptContext<?>> result = new ArrayList<>();
 
-        result.addAll(ReflectionHelper.getContexts("com.floragunn.lastalert.LastAlert"));
+        result.addAll(ReflectionHelper.getContexts("com.floragunn.signals.LastAlert"));
 
         return result;
     }
@@ -1048,7 +1048,7 @@ public final class SearchGuardPlugin extends SearchGuardSSLPlugin implements Clu
             settings.add(
                     Setting.boolSetting(ConfigConstants.SEARCHGUARD_UNSUPPORTED_LOAD_STATIC_RESOURCES, true, Property.NodeScope, Property.Filtered));
 
-            settings.addAll(ReflectionHelper.getSettings("com.floragunn.lastalert.LastAlert"));
+            settings.addAll(ReflectionHelper.getSettings("com.floragunn.signals.LastAlert"));
 
         }
 
