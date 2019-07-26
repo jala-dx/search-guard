@@ -384,7 +384,7 @@ public class ReflectionHelper {
         }
 
         try {
-            Class<?> clazz = Class.forName("com.floragunn.lastalert.LastAlert");
+            Class<?> clazz = Class.forName("com.floragunn.signals.Signals");
             Constructor<?> constructor = clazz.getConstructor(Settings.class, Path.class);
             Object impl = constructor.newInstance(settings, configPath);
             Method createComponentsMethod = impl.getClass().getMethod("createComponents", Client.class, ClusterService.class, ThreadPool.class,
