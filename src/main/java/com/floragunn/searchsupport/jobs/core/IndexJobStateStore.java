@@ -743,8 +743,7 @@ public class IndexJobStateStore<JobType extends com.floragunn.searchsupport.jobs
 
             long batchEnd = noLaterThan;
 
-            for (ActiveTrigger activeTrigger = activeTriggers.pollFirst(); activeTrigger != null
-                    && result.size() < maxCount; activeTrigger = activeTriggers.pollFirst()) {
+            for (ActiveTrigger activeTrigger = activeTriggers.pollFirst(); activeTrigger != null; activeTrigger = activeTriggers.pollFirst()) {
                 if (activeTrigger.getNextFireTime() == null) {
                     continue;
                 }
@@ -784,6 +783,10 @@ public class IndexJobStateStore<JobType extends com.floragunn.searchsupport.jobs
                 }
 
                 result.add(trigger);
+
+                if (result.size() >= maxCount) {
+                    break;
+                }
             }
 
             this.activeTriggers.addAll(excludedTriggers);
@@ -1272,15 +1275,23 @@ public class IndexJobStateStore<JobType extends com.floragunn.searchsupport.jobs
         Map<JobKey, InternalJobDetail> deletedJobs = new HashMap<>();
         Set<JobKey> newJobKeys = new HashSet<>(newJobConfig.size());
 
-        log.info("Updating jobs: " + newJobConfig);
+        log.info("Updating jobs:\n" + newJobConfig + "\n");
 
         synchronized (this) {
             Map<JobKey, JobType> loadedJobConfig = this.getLoadedJobConfig();
+
+            if (log.isDebugEnabled()) {
+                log.debug("Loaded job config:\n" + loadedJobConfig + "\n");
+            }
 
             for (JobType newJob : newJobConfig) {
                 JobKey jobKey = newJob.getJobKey();
                 newJobKeys.add(jobKey);
                 JobType existingJob = loadedJobConfig.get(jobKey);
+
+                if (log.isDebugEnabled()) {
+                    log.info("New job: " + newJob + "; existing job: " + existingJob);
+                }
 
                 if (existingJob == null) {
                     InternalJobDetail newJobDetail = createInternalJobDetailFromJobConfig(newJob, Collections.emptyMap());
@@ -1443,7 +1454,7 @@ public class IndexJobStateStore<JobType extends com.floragunn.searchsupport.jobs
         for (Trigger triggerConfig : jobConfig.getTriggers()) {
             if (!(triggerConfig instanceof OperableTrigger)) {
                 log.error("Trigger is not OperableTrigger: " + triggerConfig);
-                return null;
+                continue;
             }
 
             OperableTrigger operableTriggerConfig = (OperableTrigger) triggerConfig;
@@ -1742,6 +1753,10 @@ public class IndexJobStateStore<JobType extends com.floragunn.searchsupport.jobs
     }
 
     private void flushDirtyTriggersToIndex() {
+        if (log.isDebugEnabled()) {
+            log.debug("Flushing dirty triggers: " + this.dirtyTriggers.get());
+        }
+
         for (OperableTrigger trigger : this.dirtyTriggers.get()) {
             // TODO batch
             try {
@@ -2317,6 +2332,11 @@ public class IndexJobStateStore<JobType extends com.floragunn.searchsupport.jobs
             queue.clear();
             keyToActiveTriggerMap.clear();
         }
+
+        @Override
+        public String toString() {
+            return this.queue.toString();
+        }
     }
 
     static class ActiveTrigger implements Trigger {
@@ -2428,6 +2448,11 @@ public class IndexJobStateStore<JobType extends com.floragunn.searchsupport.jobs
         @Override
         public int compareTo(Trigger other) {
             return COMPARATOR.compare(this, other);
+        }
+
+        @Override
+        public String toString() {
+            return this.delegate.getKey().toString();
         }
 
         private static Date copyDate(Date date) {
