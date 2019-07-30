@@ -137,6 +137,7 @@ import com.floragunn.searchguard.filter.SearchGuardRestFilter;
 import com.floragunn.searchguard.http.SearchGuardHttpServerTransport;
 import com.floragunn.searchguard.http.SearchGuardNonSslHttpServerTransport;
 import com.floragunn.searchguard.http.XFFResolver;
+import com.floragunn.searchguard.internalauthtoken.InternalAuthTokenProvider;
 import com.floragunn.searchguard.privileges.PrivilegesEvaluator;
 import com.floragunn.searchguard.privileges.PrivilegesInterceptor;
 import com.floragunn.searchguard.resolver.IndexResolverReplacer;
@@ -807,9 +808,12 @@ public final class SearchGuardPlugin extends SearchGuardSSLPlugin implements Clu
         components.add(evaluator);
         components.add(sgi);
         components.add(dcf);
+        components.add(new InternalAuthTokenProvider(dcf));
 
         components.addAll(ReflectionHelper.createAlertingComponents(settings, configPath, localClient, clusterService, threadPool,
                 resourceWatcherService, scriptService, xContentRegistry, environment, nodeEnvironment, namedWriteableRegistry));
+        
+   
 
         sgRestHandler = new SearchGuardRestFilter(backendRegistry, auditLog, threadPool, principalExtractor, settings, configPath, compatConfig);
 
