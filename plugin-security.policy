@@ -25,9 +25,9 @@ grant {
   permission java.util.PropertyPermission "*","read,write";
 
   //Enable when we switch to UnboundID LDAP SDK
-  //permission java.util.PropertyPermission "*", "read,write";
-  //permission java.lang.RuntimePermission "setFactory";
-  //permission javax.net.ssl.SSLPermission "setHostnameVerifier";
+  permission java.util.PropertyPermission "*", "read,write";
+  permission java.lang.RuntimePermission "setFactory";
+  permission javax.net.ssl.SSLPermission "setHostnameVerifier";
 
   //below permissions are needed for netty native open ssl support
   permission java.lang.RuntimePermission "accessClassInPackage.sun.misc";
