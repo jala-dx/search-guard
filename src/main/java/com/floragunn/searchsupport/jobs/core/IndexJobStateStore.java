@@ -33,15 +33,8 @@ import org.elasticsearch.common.xcontent.ToXContentObject;
 import org.elasticsearch.common.xcontent.XContentBuilder;
 import org.elasticsearch.common.xcontent.XContentFactory;
 import org.elasticsearch.index.IndexNotFoundException;
-import org.elasticsearch.index.engine.Engine.Delete;
-import org.elasticsearch.index.engine.Engine.DeleteResult;
-import org.elasticsearch.index.engine.Engine.Index;
-import org.elasticsearch.index.engine.Engine.IndexResult;
-import org.elasticsearch.index.engine.Engine.Result;
 import org.elasticsearch.index.query.QueryBuilder;
 import org.elasticsearch.index.query.QueryBuilders;
-import org.elasticsearch.index.shard.IndexingOperationListener;
-import org.elasticsearch.index.shard.ShardId;
 import org.elasticsearch.search.SearchHit;
 import org.quartz.Calendar;
 import org.quartz.DailyTimeIntervalTrigger;
@@ -848,6 +841,19 @@ public class IndexJobStateStore<JobType extends com.floragunn.searchsupport.jobs
                     continue;
                 }
 
+                InternalJobDetail jobDetail = this.keyToJobMap.get(trigger.getJobKey());
+
+                if (jobDetail == null) {
+                    if (log.isDebugEnabled()) {
+                        log.debug("Could not find job detail for fired trigger: " + trigger
+                                + "; this probably means that the job was deleted after the trigger was acquired. Skipping this trigger");
+                    }
+                    activeTriggers.remove(internalOperableTrigger);
+                    internalOperableTrigger.state = InternalOperableTrigger.State.DELETED;
+                    markDirty(internalOperableTrigger);
+                    continue;
+                }
+
                 Date prevFireTime = trigger.getPreviousFireTime();
 
                 activeTriggers.remove(internalOperableTrigger);
@@ -855,8 +861,6 @@ public class IndexJobStateStore<JobType extends com.floragunn.searchsupport.jobs
                 internalOperableTrigger.state = InternalOperableTrigger.State.EXECUTING;
                 internalOperableTrigger.node = nodeId;
                 markDirty(internalOperableTrigger);
-
-                InternalJobDetail jobDetail = this.keyToJobMap.get(trigger.getJobKey());
 
                 TriggerFiredBundle triggerFiredBundle = new TriggerFiredBundle(jobDetail, trigger, null, false, new Date(),
                         trigger.getPreviousFireTime(), prevFireTime, trigger.getNextFireTime());
