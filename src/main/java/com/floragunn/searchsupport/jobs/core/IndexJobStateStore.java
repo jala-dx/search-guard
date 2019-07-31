@@ -100,7 +100,6 @@ public class IndexJobStateStore<JobType extends com.floragunn.searchsupport.jobs
     }
 
     private final String schedulerName;
-    private final String indexName;
     private final String statusIndexName;
     private final String nodeId;
     private final Client client;
@@ -125,11 +124,10 @@ public class IndexJobStateStore<JobType extends com.floragunn.searchsupport.jobs
     private final ScheduledThreadPoolExecutor periodicMaintenanceExecutor = new ScheduledThreadPoolExecutor(1);
     private final ClusterService clusterService;
 
-    public IndexJobStateStore(String schedulerName, String indexName, String nodeId, Client client, Iterable<JobType> jobConfigSource,
+    public IndexJobStateStore(String schedulerName, String statusIndexName, String nodeId, Client client, Iterable<JobType> jobConfigSource,
             JobConfigFactory<JobType> jobFactory, ClusterService clusterService) {
         this.schedulerName = schedulerName;
-        this.indexName = indexName;
-        this.statusIndexName = indexName + "_status";
+        this.statusIndexName = statusIndexName;
         this.nodeId = nodeId;
         this.client = client;
         this.jobConfigSource = jobConfigSource;
@@ -2463,36 +2461,6 @@ public class IndexJobStateStore<JobType extends com.floragunn.searchsupport.jobs
             }
         }
 
-    }
-
-    class UpdateListener implements IndexingOperationListener {
-
-        @Override
-        public void postIndex(ShardId shardId, Index index, IndexResult result) {
-            if (!isForConfiguredIndex(shardId)) {
-                return;
-            }
-
-            if (result.getResultType() != Result.Type.SUCCESS) {
-                return;
-            }
-        }
-
-        @Override
-        public void postDelete(ShardId shardId, Delete delete, DeleteResult result) {
-            if (!isForConfiguredIndex(shardId)) {
-                return;
-            }
-
-            if (result.getResultType() != Result.Type.SUCCESS) {
-                return;
-            }
-
-        }
-
-        private boolean isForConfiguredIndex(ShardId shardId) {
-            return IndexJobStateStore.this.indexName.equals(shardId.getIndexName());
-        }
     }
 
     public boolean isInitialized() {

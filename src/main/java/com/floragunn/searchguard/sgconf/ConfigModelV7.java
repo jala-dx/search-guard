@@ -470,6 +470,11 @@ public class ConfigModelV7 extends ConfigModel {
         public XContentBuilder toXContent(XContentBuilder builder, Params params) throws IOException {
             builder.startObject();
 
+            builder.startObject("_sg_meta");
+            builder.field("type", "roles");
+            builder.field("config_version", 2);
+            builder.endObject();
+            
             for (SgRole role : roles) {
                 builder.field(role.getName(), role);
             }
@@ -679,11 +684,11 @@ public class ConfigModelV7 extends ConfigModel {
             builder.startObject();
 
             if (this.clusterPerms != null && this.clusterPerms.size() > 0) {
-                builder.array("cluster_permissions", this.clusterPerms);
+                builder.field("cluster_permissions", this.clusterPerms);
             }
 
             if (ipatterns != null && ipatterns.size() > 0) {
-                builder.array("index_permissions", ipatterns);
+                builder.field("index_permissions", ipatterns);
             }
 
             /* TODO ????
@@ -844,7 +849,7 @@ public class ConfigModelV7 extends ConfigModel {
         public XContentBuilder toXContent(XContentBuilder builder, Params params) throws IOException {
             builder.startObject();
             // TODO XXX
-            builder.array("index_patterns", Collections.singletonList(indexPattern));
+            builder.field("index_patterns", Collections.singletonList(indexPattern));
 
             if (dlsQuery != null) {
                 builder.field("dls", dlsQuery);

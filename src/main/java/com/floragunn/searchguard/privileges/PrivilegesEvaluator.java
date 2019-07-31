@@ -154,15 +154,16 @@ public class PrivilegesEvaluator implements DCFListener {
             action0 = "indices:admin/upgrade";
         }
 
-        final TransportAddress caller = Objects.requireNonNull((TransportAddress) this.threadContext.getTransient(ConfigConstants.SG_REMOTE_ADDRESS));
-
-        Set<String> mappedRoles = mapSgRoles(user, caller);
-        SgRoles sgRoles = getSgRoles(mappedRoles);
+        TransportAddress caller;
+        Set<String> mappedRoles;
+        SgRoles sgRoles;
         
         if (authFromInternalAuthToken == null) {
+            caller = Objects.requireNonNull((TransportAddress) this.threadContext.getTransient(ConfigConstants.SG_REMOTE_ADDRESS));
             mappedRoles = mapSgRoles(user, caller);
             sgRoles = getSgRoles(mappedRoles);
         } else {
+            caller = null;
             mappedRoles = authFromInternalAuthToken.getSgRoles().getRoleNames();
             sgRoles = authFromInternalAuthToken.getSgRoles();
         }

@@ -665,7 +665,7 @@ public class ConfigModelV6 extends ConfigModel {
             builder.startObject();
 
             if (this.clusterPerms != null && this.clusterPerms.size() > 0) {
-                builder.array("cluster", this.clusterPerms);
+                builder.field("cluster", this.clusterPerms);
             }
 
             if (ipatterns != null && ipatterns.size() > 0) {

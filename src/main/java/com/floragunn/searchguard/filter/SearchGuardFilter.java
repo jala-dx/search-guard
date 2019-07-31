@@ -145,7 +145,9 @@ public class SearchGuardFilter implements ActionFilter {
             
             if (authFromInternalAuthToken != null) {
                 if (log.isDebugEnabled()) {
+                    log.debug("userIsAdmin: " + userIsAdmin + "\n" + "interClusterRequest: " + interClusterRequest + "\ntrustedClusterRequest: " + trustedClusterRequest + "\nconfRequest: " + confRequest + "\npassThroughRequest: " + passThroughRequest);
                     log.debug("Getting auth from internal auth token.\nOld user: " + user + "\nNew auth: " + authFromInternalAuthToken);
+                    log.debug(threadContext.getHeaders());
                     user = authFromInternalAuthToken.getUser();
                 }
             }
@@ -216,7 +218,7 @@ public class SearchGuardFilter implements ActionFilter {
             }
 
             if(Origin.LOCAL.toString().equals(threadContext.getTransient(ConfigConstants.SG_ORIGIN))
-                    && (interClusterRequest || HeaderHelper.isDirectRequest(threadContext))
+                    && (interClusterRequest || HeaderHelper.isDirectRequest(threadContext) && authFromInternalAuthToken == null)
                     ) {
 
                 chain.proceed(task, action, request, listener);
