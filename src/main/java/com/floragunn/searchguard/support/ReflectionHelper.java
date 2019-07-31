@@ -377,7 +377,7 @@ public class ReflectionHelper {
 
     public static Collection<Object> createAlertingComponents(Settings settings, Path configPath, Client client, ClusterService clusterService,
             ThreadPool threadPool, ResourceWatcherService resourceWatcherService, ScriptService scriptService, NamedXContentRegistry xContentRegistry,
-            Environment environment, NodeEnvironment nodeEnvironment, NamedWriteableRegistry namedWriteableRegistry) {
+            Environment environment, NodeEnvironment nodeEnvironment, NamedWriteableRegistry namedWriteableRegistry, DynamicConfigFactory dcf) {
 
         if (enterpriseModulesDisabled()) {
             // TODO ?
@@ -390,11 +390,11 @@ public class ReflectionHelper {
             Object impl = constructor.newInstance(settings, configPath);
             Method createComponentsMethod = impl.getClass().getMethod("createComponents", Client.class, ClusterService.class, ThreadPool.class,
                     ResourceWatcherService.class, ScriptService.class, NamedXContentRegistry.class, Environment.class, NodeEnvironment.class,
-                    NamedWriteableRegistry.class);
+                    NamedWriteableRegistry.class, DynamicConfigFactory.class);
 
             @SuppressWarnings("unchecked")
             Collection<Object> result = (Collection<Object>) createComponentsMethod.invoke(impl, client, clusterService, threadPool,
-                    resourceWatcherService, scriptService, xContentRegistry, environment, nodeEnvironment, namedWriteableRegistry);
+                    resourceWatcherService, scriptService, xContentRegistry, environment, nodeEnvironment, namedWriteableRegistry, dcf);
 
             addLoadedModule(clazz);
             return result;

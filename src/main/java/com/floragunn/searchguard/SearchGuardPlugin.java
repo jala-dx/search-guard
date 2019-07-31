@@ -813,7 +813,7 @@ public final class SearchGuardPlugin extends SearchGuardSSLPlugin implements Clu
         components.add(internalAuthTokenProvider);
 
         components.addAll(ReflectionHelper.createAlertingComponents(settings, configPath, localClient, clusterService, threadPool,
-                resourceWatcherService, scriptService, xContentRegistry, environment, nodeEnvironment, namedWriteableRegistry));
+                resourceWatcherService, scriptService, xContentRegistry, environment, nodeEnvironment, namedWriteableRegistry, dcf));
         
    
 
