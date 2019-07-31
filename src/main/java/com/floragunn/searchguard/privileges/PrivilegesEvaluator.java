@@ -66,6 +66,7 @@ import org.elasticsearch.threadpool.ThreadPool;
 import com.floragunn.searchguard.auditlog.AuditLog;
 import com.floragunn.searchguard.configuration.ClusterInfoHolder;
 import com.floragunn.searchguard.configuration.ConfigurationRepository;
+import com.floragunn.searchguard.internalauthtoken.InternalAuthTokenProvider.AuthFromInternalAuthToken;
 import com.floragunn.searchguard.resolver.IndexResolverReplacer;
 import com.floragunn.searchguard.resolver.IndexResolverReplacer.Resolved;
 import com.floragunn.searchguard.sgconf.ConfigModel;
@@ -143,7 +144,7 @@ public class PrivilegesEvaluator implements DCFListener {
         return configModel !=null && configModel.getSgRoles() != null && dcm != null;
     }
 
-    public PrivilegesEvaluatorResponse evaluate(final User user, String action0, final ActionRequest request, Task task) {
+    public PrivilegesEvaluatorResponse evaluate(final User user, String action0, final ActionRequest request, Task task, AuthFromInternalAuthToken authFromInternalAuthToken) {
 
         if (!isInitialized()) {
             throw new ElasticsearchSecurityException("Search Guard is not initialized.");
@@ -155,8 +156,16 @@ public class PrivilegesEvaluator implements DCFListener {
 
         final TransportAddress caller = Objects.requireNonNull((TransportAddress) this.threadContext.getTransient(ConfigConstants.SG_REMOTE_ADDRESS));
 
-        final Set<String> mappedRoles = mapSgRoles(user, caller);
-        final SgRoles sgRoles = getSgRoles(mappedRoles);
+        Set<String> mappedRoles = mapSgRoles(user, caller);
+        SgRoles sgRoles = getSgRoles(mappedRoles);
+        
+        if (authFromInternalAuthToken == null) {
+            mappedRoles = mapSgRoles(user, caller);
+            sgRoles = getSgRoles(mappedRoles);
+        } else {
+            mappedRoles = authFromInternalAuthToken.getSgRoles().getRoleNames();
+            sgRoles = authFromInternalAuthToken.getSgRoles();
+        }
 
         final PrivilegesEvaluatorResponse presponse = new PrivilegesEvaluatorResponse();
 

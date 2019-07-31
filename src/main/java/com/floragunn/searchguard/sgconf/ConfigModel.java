@@ -17,6 +17,7 @@
 
 package com.floragunn.searchguard.sgconf;
 
+import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
@@ -32,4 +33,11 @@ public abstract class ConfigModel {
     public abstract SgRoles getSgRoles();
     
     public abstract Set<String> getAllConfiguredTenantNames();
+    
+    public abstract ActionGroupResolver getActionGroupResolver();
+
+    public interface ActionGroupResolver {
+        Set<String> resolvedActions(final List<String> actions);
+    }
+
 }

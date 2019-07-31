@@ -16,7 +16,9 @@ public class DefaultJobConfig implements JobConfig {
     private boolean durable;
     private List<Trigger> triggers;
     private long version;
-
+    private String authToken;
+    private String secureAuthTokenAudience;
+    
     public long getVersion() {
         return version;
     }
@@ -88,5 +90,22 @@ public class DefaultJobConfig implements JobConfig {
     public void setJobClass(Class<? extends Job> jobClass) {
         this.jobClass = jobClass;
     }
+
+    public String getAuthToken() {
+        return authToken;
+    }
+
+    public void setAuthToken(String authToken) {
+        this.authToken = authToken;
+    }
+
+    public String getSecureAuthTokenAudience() {
+        return secureAuthTokenAudience;
+    }
+
+    public void setSecureAuthTokenAudience(String secureAuthTokenAudience) {
+        this.secureAuthTokenAudience = secureAuthTokenAudience;
+    }
+
 
 }

@@ -40,6 +40,7 @@ public abstract class AbstractJobConfigFactory<JobConfigType extends JobConfig> 
     protected String durablePath = "$.durable";
     protected String cronScheduleTriggerPath = "$.trigger.schedule.cron";
     protected String intervalScheduleTriggerPath = "$.trigger.schedule.interval";
+    protected String authTokenPath = "$._meta.auth_token";
     protected String jobDataPath = "$";
 
     protected final static Configuration JSON_PATH_CONFIG = Configuration.builder().options(com.jayway.jsonpath.Option.SUPPRESS_EXCEPTIONS)
@@ -121,6 +122,14 @@ public abstract class AbstractJobConfigFactory<JobConfigType extends JobConfig> 
         return triggers;
     }
 
+    protected String getAuthToken(ReadContext ctx) {
+        if (this.authTokenPath != null) {
+            return ctx.read(authTokenPath, String.class);
+        } else {
+            return null;
+        }
+    }
+    
     protected Class<? extends Job> getJobClass(ReadContext ctx) {
         return jobClass;
     }

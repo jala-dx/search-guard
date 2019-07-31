@@ -60,6 +60,8 @@ import com.floragunn.searchguard.compliance.ComplianceConfig;
 import com.floragunn.searchguard.configuration.AdminDNs;
 import com.floragunn.searchguard.configuration.CompatConfig;
 import com.floragunn.searchguard.configuration.DlsFlsRequestValve;
+import com.floragunn.searchguard.internalauthtoken.InternalAuthTokenProvider;
+import com.floragunn.searchguard.internalauthtoken.InternalAuthTokenProvider.AuthFromInternalAuthToken;
 import com.floragunn.searchguard.privileges.PrivilegesEvaluator;
 import com.floragunn.searchguard.privileges.PrivilegesEvaluatorResponse;
 import com.floragunn.searchguard.support.Base64Helper;
@@ -80,10 +82,11 @@ public class SearchGuardFilter implements ActionFilter {
     private final ClusterService cs;
     private final ComplianceConfig complianceConfig;
     private final CompatConfig compatConfig;
+    private final InternalAuthTokenProvider internalAuthTokenProvider;
 
     public SearchGuardFilter(final PrivilegesEvaluator evalp, final AdminDNs adminDns,
             DlsFlsRequestValve dlsFlsValve, AuditLog auditLog, ThreadPool threadPool, ClusterService cs,
-            ComplianceConfig complianceConfig, final CompatConfig compatConfig) {
+            ComplianceConfig complianceConfig, final CompatConfig compatConfig, InternalAuthTokenProvider internalAuthTokenProvider) {
         this.evalp = evalp;
         this.adminDns = adminDns;
         this.dlsFlsValve = dlsFlsValve;
@@ -92,6 +95,7 @@ public class SearchGuardFilter implements ActionFilter {
         this.cs = cs;
         this.complianceConfig = complianceConfig;
         this.compatConfig = compatConfig;
+        this.internalAuthTokenProvider = internalAuthTokenProvider;
     }
 
     @Override
@@ -122,7 +126,7 @@ public class SearchGuardFilter implements ActionFilter {
                 attachSourceFieldContext(request);
             }
 
-            final User user = threadContext.getTransient(ConfigConstants.SG_USER);
+            User user = threadContext.getTransient(ConfigConstants.SG_USER);
             final boolean userIsAdmin = isUserAdmin(user, adminDns);
             final boolean interClusterRequest = HeaderHelper.isInterClusterRequest(threadContext);
             final boolean trustedClusterRequest = HeaderHelper.isTrustedClusterRequest(threadContext);
@@ -135,7 +139,17 @@ public class SearchGuardFilter implements ActionFilter {
                     (interClusterRequest || HeaderHelper.isDirectRequest(threadContext))
                     && action.startsWith("internal:")
                     && !action.startsWith("internal:transport/proxy");
+            
 
+            AuthFromInternalAuthToken authFromInternalAuthToken = internalAuthTokenProvider.userAuthFromToken(threadContext);
+            
+            if (authFromInternalAuthToken != null) {
+                if (log.isDebugEnabled()) {
+                    log.debug("Getting auth from internal auth token.\nOld user: " + user + "\nNew auth: " + authFromInternalAuthToken);
+                    user = authFromInternalAuthToken.getUser();
+                }
+            }
+            
             if (user != null) {
                 org.apache.logging.log4j.ThreadContext.put("user", user.getName());    
             }
@@ -239,7 +253,7 @@ public class SearchGuardFilter implements ActionFilter {
                 log.trace("Evaluate permissions for user: {}", user.getName());
             }
 
-            final PrivilegesEvaluatorResponse pres = eval.evaluate(user, action, request, task);
+            final PrivilegesEvaluatorResponse pres = eval.evaluate(user, action, request, task, authFromInternalAuthToken);
             
             if (log.isDebugEnabled()) {
                 log.debug(pres);

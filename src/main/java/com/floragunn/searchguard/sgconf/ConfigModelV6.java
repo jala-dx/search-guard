@@ -50,6 +50,7 @@ import org.elasticsearch.common.xcontent.ToXContentObject;
 import org.elasticsearch.common.xcontent.XContentBuilder;
 
 import com.floragunn.searchguard.resolver.IndexResolverReplacer.Resolved;
+import com.floragunn.searchguard.sgconf.ConfigModel.ActionGroupResolver;
 import com.floragunn.searchguard.sgconf.impl.SgDynamicConfiguration;
 import com.floragunn.searchguard.sgconf.impl.v6.ActionGroupsV6;
 import com.floragunn.searchguard.sgconf.impl.v6.RoleMappingsV6;
@@ -113,10 +114,11 @@ public class ConfigModelV6 extends ConfigModel {
     public SgRoles getSgRoles() {
         return sgRoles;
     }
-
-    private static interface ActionGroupResolver {
-        Set<String> resolvedActions(final List<String> actions);
+    
+    public ActionGroupResolver getActionGroupResolver() {
+        return agr;
     }
+
 
     private ActionGroupResolver reloadActionGroups(SgDynamicConfiguration<ActionGroupsV6> actionGroups) {
         return new ActionGroupResolver() {

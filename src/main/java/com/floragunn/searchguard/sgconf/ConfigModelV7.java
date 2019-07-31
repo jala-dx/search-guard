@@ -51,6 +51,7 @@ import org.elasticsearch.common.xcontent.XContentBuilder;
 import org.elasticsearch.common.xcontent.ToXContent.Params;
 
 import com.floragunn.searchguard.resolver.IndexResolverReplacer.Resolved;
+import com.floragunn.searchguard.sgconf.ConfigModel.ActionGroupResolver;
 import com.floragunn.searchguard.sgconf.ConfigModelV6.IndexPattern;
 import com.floragunn.searchguard.sgconf.ConfigModelV6.SgRole;
 import com.floragunn.searchguard.sgconf.ConfigModelV6.Tenant;
@@ -111,9 +112,9 @@ public class ConfigModelV7 extends ConfigModel {
     public SgRoles getSgRoles() {
         return sgRoles;
     }
-
-    private static interface ActionGroupResolver {
-        Set<String> resolvedActions(final List<String> actions);
+    
+    public ActionGroupResolver getActionGroupResolver() {
+        return agr;
     }
 
     private ActionGroupResolver reloadActionGroups(SgDynamicConfiguration<ActionGroupsV7> actionGroups) {
@@ -198,55 +199,11 @@ public class ConfigModelV7 extends ConfigModel {
 
                 @Override
                 public SgRole call() throws Exception {
-                    SgRole _sgRole = new SgRole(sgRole.getKey());
-
                     if (sgRole.getValue() == null) {
                         return null;
                     }
 
-                    final Set<String> permittedClusterActions = agr.resolvedActions(sgRole.getValue().getCluster_permissions());
-                    _sgRole.addClusterPerms(permittedClusterActions);
-
-                    /*for(RoleV7.Tenant tenant: sgRole.getValue().getTenant_permissions()) {
-                    
-                        //if(tenant.equals(user.getName())) {
-                        //    continue;
-                        //}
-                    
-                        if(isTenantsRw(tenant)) {
-                            _sgRole.addTenant(new Tenant(tenant.getKey(), true));
-                        } else {
-                            _sgRole.addTenant(new Tenant(tenant.getKey(), false));
-                        }
-                    }*/
-
-                    for (final Index permittedAliasesIndex : sgRole.getValue().getIndex_permissions()) {
-
-                        final String dls = permittedAliasesIndex.getDls();
-                        final List<String> fls = permittedAliasesIndex.getFls();
-                        final List<String> maskedFields = permittedAliasesIndex.getMasked_fields();
-
-                        for (String pat : permittedAliasesIndex.getIndex_patterns()) {
-                            IndexPattern _indexPattern = new IndexPattern(pat);
-                            _indexPattern.setDlsQuery(dls);
-                            _indexPattern.addFlsFields(fls);
-                            _indexPattern.addMaskedFields(maskedFields);
-                            _indexPattern.addPerm(agr.resolvedActions(permittedAliasesIndex.getAllowed_actions()));
-
-                            /*for(Entry<String, List<String>> type: permittedAliasesIndex.getValue().getTypes(-).entrySet()) {
-                                TypePerm typePerm = new TypePerm(type.getKey());
-                                final List<String> perms = type.getValue();
-                                typePerm.addPerms(agr.resolvedActions(perms));
-                                _indexPattern.addTypePerms(typePerm);
-                            }*/
-
-                            _sgRole.addIndexPattern(_indexPattern);
-
-                        }
-
-                    }
-
-                    return _sgRole;
+                    return SgRole.create(sgRole.getKey(), sgRole.getValue(), agr);
                 }
             });
 
@@ -283,6 +240,23 @@ public class ConfigModelV7 extends ConfigModel {
 
     public static class SgRoles extends com.floragunn.searchguard.sgconf.SgRoles implements ToXContentObject {
 
+        public static SgRoles create(SgDynamicConfiguration<RoleV7> settings, ActionGroupResolver actionGroupResolver) {
+
+            SgRoles result = new SgRoles(settings.getCEntries().size());
+
+            for (Entry<String, RoleV7> entry : settings.getCEntries().entrySet()) {
+
+                if (entry.getValue() == null) {
+                    continue;
+                }
+                
+                result.addSgRole(SgRole.create(entry.getKey(), entry.getValue(), actionGroupResolver));
+            }
+            
+            return result;
+        }
+
+        
         protected final Logger log = LogManager.getLogger(this.getClass());
 
         final Set<SgRole> roles;
@@ -507,6 +481,55 @@ public class ConfigModelV7 extends ConfigModel {
 
     public static class SgRole implements ToXContentObject {
 
+        static SgRole create(String roleName, RoleV7 roleConfig, ActionGroupResolver actionGroupResolver) {
+            SgRole result = new SgRole(roleName);
+
+            final Set<String> permittedClusterActions = actionGroupResolver.resolvedActions(roleConfig.getCluster_permissions());
+            result.addClusterPerms(permittedClusterActions);
+
+            // XXX
+            /*for(RoleV7.Tenant tenant: sgRole.getValue().getTenant_permissions()) {
+            
+                //if(tenant.equals(user.getName())) {
+                //    continue;
+                //}
+            
+                if(isTenantsRw(tenant)) {
+                    _sgRole.addTenant(new Tenant(tenant.getKey(), true));
+                } else {
+                    _sgRole.addTenant(new Tenant(tenant.getKey(), false));
+                }
+            }*/
+
+            for (final Index permittedAliasesIndex : roleConfig.getIndex_permissions()) {
+
+                final String dls = permittedAliasesIndex.getDls();
+                final List<String> fls = permittedAliasesIndex.getFls();
+                final List<String> maskedFields = permittedAliasesIndex.getMasked_fields();
+
+                for (String pat : permittedAliasesIndex.getIndex_patterns()) {
+                    IndexPattern _indexPattern = new IndexPattern(pat);
+                    _indexPattern.setDlsQuery(dls);
+                    _indexPattern.addFlsFields(fls);
+                    _indexPattern.addMaskedFields(maskedFields);
+                    _indexPattern.addPerm(actionGroupResolver.resolvedActions(permittedAliasesIndex.getAllowed_actions()));
+
+                    /*for(Entry<String, List<String>> type: permittedAliasesIndex.getValue().getTypes(-).entrySet()) {
+                        TypePerm typePerm = new TypePerm(type.getKey());
+                        final List<String> perms = type.getValue();
+                        typePerm.addPerms(agr.resolvedActions(perms));
+                        _indexPattern.addTypePerms(typePerm);
+                    }*/
+
+                    result.addIndexPattern(_indexPattern);
+
+                }
+
+            }
+
+            return result;
+        }
+        
         private final String name;
         //private final Set<Tenant> tenants = new HashSet<>();
         private final Set<IndexPattern> ipatterns = new HashSet<>();

@@ -34,6 +34,7 @@ public class DefaultJobConfigFactory extends AbstractJobConfigFactory<DefaultJob
         result.setJobDataMap(getJobDataMap(ctx));
         result.setTriggers(getTriggers(jobKey, ctx));
         result.setVersion(version);
+        result.setAuthToken(getAuthToken(ctx));
 
         return result;
     }

@@ -26,5 +26,9 @@ public interface JobConfig {
     boolean equals(Object other);
     
     long getVersion();
+    
+    String getAuthToken();
+    
+    String getSecureAuthTokenAudience();
 
 }
