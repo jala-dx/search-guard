@@ -250,7 +250,8 @@ public final class SearchGuardPlugin extends SearchGuardSSLPlugin implements Clu
             return;
         }
         
-        SearchGuardPlugin.protectedIndices = new ProtectedIndices(settings, "signals_*");
+        // TODO only do this when signals plugin is installed
+        SearchGuardPlugin.protectedIndices = new ProtectedIndices(settings, ".signals_*_watches*");
 
         demoCertHashes.add("54a92508de7a39d06242a0ffbf59414d7eb478633c719e6af03938daf6de8a1a");
         demoCertHashes.add("742e4659c79d7cad89ea86aab70aea490f23bbfc7e72abd5f0a5d3fb4c84d212");
