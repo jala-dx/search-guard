@@ -69,6 +69,7 @@ import org.elasticsearch.node.Node;
 import org.elasticsearch.node.PluginAwareNode;
 import org.elasticsearch.transport.Netty4Plugin;
 import org.junit.Assert;
+import org.junit.Ignore;
 import org.junit.Rule;
 import org.junit.Test;
 import org.junit.rules.ExpectedException;
@@ -217,6 +218,7 @@ public class SGTests extends AbstractUnitTest {
     }
     
     @Test
+    @Ignore
     public void testNodeClientAllowedWithServerCertificate() throws Exception {
         final Settings settings = Settings.builder().put("searchguard.ssl.transport.enabled", true)
                 .put(SSLConfigConstants.SEARCHGUARD_SSL_HTTP_ENABLE_OPENSSL_IF_AVAILABLE, allowOpenSSL)
@@ -2735,6 +2737,7 @@ public class SGTests extends AbstractUnitTest {
     }
     
     @Test
+    @Ignore
     public void testDNSpecials() throws Exception {
 
         final Settings settings = Settings.builder().put("searchguard.ssl.transport.enabled", true)

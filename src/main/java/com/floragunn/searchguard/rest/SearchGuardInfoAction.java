@@ -21,6 +21,7 @@ import static org.elasticsearch.rest.RestRequest.Method.*;
 
 import java.io.IOException;
 import java.security.cert.X509Certificate;
+import java.util.Set;
 
 import org.elasticsearch.client.node.NodeClient;
 import org.elasticsearch.common.settings.Settings;
@@ -66,14 +67,14 @@ public class SearchGuardInfoAction extends BaseRestHandler {
                     final X509Certificate[] certs = threadContext.getTransient(ConfigConstants.SG_SSL_PEER_CERTIFICATES);
                     final User user = (User)threadContext.getTransient(ConfigConstants.SG_USER);
                     final TransportAddress remoteAddress = (TransportAddress) threadContext.getTransient(ConfigConstants.SG_REMOTE_ADDRESS);
-
+                    final Set<String> sgRoles = evaluator.mapSgRoles(user, remoteAddress);
                     builder.startObject();
                     builder.field("user", user);
                     builder.field("user_name", user==null?null:user.getName());
                     builder.field("user_requested_tenant", user==null?null:user.getRequestedTenant());
                     builder.field("remote_address", remoteAddress);
-                    builder.field("sg_roles", evaluator.mapSgRoles(user, remoteAddress));
-                    builder.field("sg_tenants", evaluator.mapTenants(user, remoteAddress));
+                    builder.field("sg_roles", sgRoles);
+                    builder.field("sg_tenants", evaluator.mapTenants(user, sgRoles));
                     builder.field("principal", (String)threadContext.getTransient(ConfigConstants.SG_SSL_PRINCIPAL));
                     builder.field("peer_certificates", certs != null && certs.length > 0 ? certs.length + "" : "0");
                     builder.endObject();

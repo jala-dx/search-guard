@@ -31,6 +31,12 @@ import java.util.Map.Entry;
 import java.util.Objects;
 import java.util.Set;
 import java.util.TreeSet;
+import java.util.concurrent.Callable;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
 
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
@@ -89,7 +95,11 @@ import com.floragunn.searchguard.support.Base64Helper;
 import com.floragunn.searchguard.support.ConfigConstants;
 import com.floragunn.searchguard.support.WildcardMatcher;
 import com.floragunn.searchguard.user.User;
+import com.google.common.collect.ArrayListMultimap;
 import com.google.common.collect.ImmutableSet;
+import com.google.common.collect.ListMultimap;
+import com.google.common.collect.MultimapBuilder.SetMultimapBuilder;
+import com.google.common.collect.SetMultimap;
 import com.google.common.collect.Sets;
 
 public class PrivilegesEvaluator {
@@ -114,6 +124,9 @@ public class PrivilegesEvaluator {
     
     private final boolean enableSnapshotRestorePrivilege;
     private final boolean checkSnapshotRestoreWritePrivileges;
+    
+    private RoleMappingHolder roleMappingHolder;
+    private final TenantHolder tenantHolder;
 
     public PrivilegesEvaluator(final ClusterService clusterService, final ThreadPool threadPool, final ConfigurationRepository configurationRepository, final ActionGroupHolder ah,
             final IndexNameExpressionResolver resolver, AuditLog auditLog, final Settings settings, final PrivilegesInterceptor privilegesInterceptor) {
@@ -132,6 +145,18 @@ public class PrivilegesEvaluator {
                 ConfigConstants.SG_DEFAULT_ENABLE_SNAPSHOT_RESTORE_PRIVILEGE);
         this.checkSnapshotRestoreWritePrivileges = settings.getAsBoolean(ConfigConstants.SG_CHECK_SNAPSHOT_RESTORE_WRITE_PRIVILEGES,
                 ConfigConstants.SG_DEFAULT_CHECK_SNAPSHOT_RESTORE_WRITE_PRIVILEGES);
+        
+        tenantHolder = new TenantHolder();
+        
+        this.configurationRepository.subscribeOnChange(ConfigConstants.CONFIGNAME_ROLES, tenantHolder);
+        
+        this.configurationRepository.subscribeOnChange(ConfigConstants.CONFIGNAME_ROLES_MAPPING, new ConfigurationChangeListener() {
+            
+            public void onChange(Settings rolesMapping) {
+                final RoleMappingHolder tmp = new RoleMappingHolder(rolesMapping);
+                roleMappingHolder = tmp;
+            }
+        });
 
         /*
         indices:admin/template/delete
@@ -180,16 +205,12 @@ public class PrivilegesEvaluator {
         return configurationRepository.getConfiguration(ConfigConstants.CONFIGNAME_ROLES);
     }
 
-    private Settings getRolesMappingSettings() {
-        return configurationRepository.getConfiguration(ConfigConstants.CONFIGNAME_ROLES_MAPPING);
-    }
-    
     private Settings getConfigSettings() {
         return configurationRepository.getConfiguration(ConfigConstants.CONFIGNAME_CONFIG);
     }
     
     public boolean isInitialized() {
-        return getRolesSettings() != null && getRolesMappingSettings() != null && getConfigSettings() != null;
+        return roleMappingHolder != null && tenantHolder.initialized && getRolesSettings() != null && getConfigSettings() != null;
     }
 
     public static class IndexType {
@@ -322,7 +343,7 @@ public class PrivilegesEvaluator {
     }
     
     public PrivEvalResponse evaluate(final User user, String action, final ActionRequest request) {
-           
+        
         if (!isInitialized()) {
             throw new ElasticsearchSecurityException("Search Guard is not initialized.");
         }
@@ -412,7 +433,7 @@ public class PrivilegesEvaluator {
                 }
             }
         }
-
+        
         final Set<String> sgRoles = mapSgRoles(user, caller);
        
         if (log.isDebugEnabled()) {
@@ -421,7 +442,7 @@ public class PrivilegesEvaluator {
         
         if(privilegesInterceptor.getClass() != PrivilegesInterceptor.class) {
         
-            final Boolean replaceResult = privilegesInterceptor.replaceKibanaIndex(request, action, user, config, requestedResolvedIndices, mapTenants(user, caller));
+            final Boolean replaceResult = privilegesInterceptor.replaceKibanaIndex(request, action, user, config, requestedResolvedIndices, mapTenants(user, sgRoles));
     
             if (replaceResult == Boolean.TRUE) {
                 auditLog.logMissingPrivileges(action, request);
@@ -471,7 +492,7 @@ public class PrivilegesEvaluator {
         }
         
         final Set<IndexType> _requestedResolvedIndexTypesGlobal = new HashSet<IndexType>(requestedResolvedIndexTypes);
-
+        
         for (final Iterator<String> iterator = sgRoles.iterator(); iterator.hasNext();) {
             final String sgRole = (String) iterator.next();
             final Settings sgRoleSettings = roles.getByPrefix(sgRole);
@@ -735,7 +756,7 @@ public class PrivilegesEvaluator {
             leftovers.put(sgRole, _requestedResolvedIndexTypes);
             
         } // end sg role loop
-                
+        
         if (!allowAction && config.getAsBoolean("searchguard.dynamic.multi_rolespan_enabled", false)) {
             allowAction = _requestedResolvedIndexTypesGlobal.isEmpty();
         }  
@@ -974,9 +995,13 @@ public class PrivilegesEvaluator {
         }
         return renamedIndices;
     }
-
+    
     public Set<String> mapSgRoles(final User user, final TransportAddress caller) {
-        
+        return this.roleMappingHolder.map(user, caller);
+    }
+    
+    /*public Set<String> mapSgRoles(final User user, final TransportAddress caller) {
+
         final Settings rolesMapping = getRolesMappingSettings();
         
         if(user == null || rolesMapping == null) {
@@ -985,41 +1010,44 @@ public class PrivilegesEvaluator {
 
         final Set<String> sgRoles = new TreeSet<String>();
         for (final String roleMap : rolesMapping.names()) {
-            final Settings roleMapSettings = rolesMapping.getByPrefix(roleMap);
             
-            if (WildcardMatcher.allPatternsMatched(roleMapSettings.getAsArray(".and_backendroles"), user.getRoles().toArray(new String[0]))) {
+            if (WildcardMatcher.allPatternsMatched(rolesMapping.getAsArray(roleMap+".and_backendroles"), user.getRoles().toArray(new String[0]))) {
                 sgRoles.add(roleMap);
                 continue;
             }
             
-            if (WildcardMatcher.matchAny(roleMapSettings.getAsArray(".backendroles"), user.getRoles().toArray(new String[0]))) {
+            if (WildcardMatcher.matchAny(rolesMapping.getAsArray(roleMap+".backendroles"), user.getRoles().toArray(new String[0]))) {
                 sgRoles.add(roleMap);
                 continue;
             }
 
-            if (WildcardMatcher.matchAny(roleMapSettings.getAsArray(".users"), user.getName())) {
+            if (WildcardMatcher.matchAny(rolesMapping.getAsArray(roleMap+".users"), user.getName())) {
                 sgRoles.add(roleMap);
                 continue;
             }
 
-            if (caller != null &&  WildcardMatcher.matchAny(roleMapSettings.getAsArray(".hosts"), caller.getAddress())) {
+            if (caller != null &&  WildcardMatcher.matchAny(rolesMapping.getAsArray(roleMap+".hosts"), caller.getAddress())) {
                 sgRoles.add(roleMap);
                 continue;
             }
 
-            if (caller != null && WildcardMatcher.matchAny(roleMapSettings.getAsArray(".hosts"), caller.getHost())) {
+            if (caller != null && WildcardMatcher.matchAny(rolesMapping.getAsArray(roleMap+".hosts"), caller.getHost())) {
                 sgRoles.add(roleMap);
                 continue;
             }
 
         }
-        
+
         return Collections.unmodifiableSet(sgRoles);
 
+    }*/
+    
+    public Map<String, Boolean> mapTenants(final User user, Set<String> roles) {
+        return this.tenantHolder.mapTenants(user, roles);
     }
     
-    public Map<String, Boolean> mapTenants(final User user, final TransportAddress caller) {
-        
+    /*
+    public Map<String, Boolean> mapTenants(final User user, final Set<String> sgRoles) {
         if(user == null) {
             return Collections.emptyMap();
         }
@@ -1027,7 +1055,7 @@ public class PrivilegesEvaluator {
         final Map<String, Boolean> result = new HashMap<String, Boolean>();
         result.put(user.getName(), true);
         
-        for(String sgRole: mapSgRoles(user, caller)) {
+        for(String sgRole: sgRoles) {
             Settings tenants = getRolesSettings().getByPrefix(sgRole+".tenants.");
             
             if(tenants != null) {
@@ -1050,7 +1078,7 @@ public class PrivilegesEvaluator {
         }
 
         return Collections.unmodifiableMap(result);
-    }
+    }*/
 
 
     private void handleIndicesWithWildcard(final String[] action0, final String permittedAliasesIndex,
@@ -1641,5 +1669,188 @@ public class PrivilegesEvaluator {
         }
 
         return true;
+    }
+
+    private class TenantHolder implements ConfigurationChangeListener {
+
+        private SetMultimap<String, Tuple<String, Boolean>> tenantsMM = null;
+        private volatile boolean initialized = false;
+
+        public Map<String, Boolean> mapTenants(final User user, Set<String> roles) {
+
+            if (user == null || tenantsMM == null) {
+                return Collections.emptyMap();
+            }
+
+            final Map<String, Boolean> result = new HashMap<>(roles.size());
+            result.put(user.getName(), true);
+
+            tenantsMM.entries().stream().filter(e -> roles.contains(e.getKey())).filter(e -> !user.getName().equals(e.getValue().v1())).forEach(e -> {
+                final String tenant = e.getValue().v1();
+                final boolean rw = e.getValue().v2();
+
+                if (rw || !result.containsKey(tenant)) { //RW outperforms RO
+                    result.put(tenant, rw);
+                }
+            });
+            return Collections.unmodifiableMap(result);
+        }
+
+        @Override
+        public void onChange(Settings roles) {
+
+            final Set<Future<Tuple<String, Set<Tuple<String, Boolean>>>>> futures = new HashSet<>(roles.size());
+
+            final ExecutorService execs = Executors.newFixedThreadPool(10);
+
+            for (String sgRole : roles.names()) {
+
+                Future<Tuple<String, Set<Tuple<String, Boolean>>>> future = execs.submit(new Callable<Tuple<String, Set<Tuple<String, Boolean>>>>() {
+                    @Override
+                    public Tuple<String, Set<Tuple<String, Boolean>>> call() throws Exception {
+                        final Set<Tuple<String, Boolean>> tuples = new HashSet<>();
+                        final Settings tenants = getRolesSettings().getByPrefix(sgRole + ".tenants.");
+
+                        if (tenants != null) {
+                            for (String tenant : tenants.names()) {
+
+                                if ("RW".equalsIgnoreCase(tenants.get(tenant, "RO"))) {
+                                    //RW
+                                    tuples.add(new Tuple<String, Boolean>(tenant, true));
+                                } else {
+                                    //RO
+                                    //if(!tenantsMM.containsValue(value)) { //RW outperforms RO
+                                    tuples.add(new Tuple<String, Boolean>(tenant, false));
+                                    //}
+                                }
+                            }
+                        }
+
+                        return new Tuple<String, Set<Tuple<String, Boolean>>>(sgRole, tuples);
+                    }
+                });
+
+                futures.add(future);
+
+            }
+
+            execs.shutdown();
+            try {
+                execs.awaitTermination(30, TimeUnit.SECONDS);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                log.error("Thread interrupted (1) while loading roles");
+                return;
+            }
+
+            try {
+                final SetMultimap<String, Tuple<String, Boolean>> tenantsMM_ = SetMultimapBuilder.hashKeys(futures.size()).hashSetValues(16).build();
+
+                for (Future<Tuple<String, Set<Tuple<String, Boolean>>>> future : futures) {
+                    Tuple<String, Set<Tuple<String, Boolean>>> result = future.get();
+                    tenantsMM_.putAll(result.v1(), result.v2());
+                }
+
+                tenantsMM = tenantsMM_;
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                log.error("Thread interrupted (2) while loading roles");
+                return;
+            } catch (ExecutionException e) {
+                log.error("Error while updating roles: {}", e.getCause(), e.getCause());
+                throw ExceptionsHelper.convertToElastic(e);
+            }
+            
+            initialized = true;
+
+        }
+    }
+
+    private class RoleMappingHolder {
+
+        private ListMultimap<String, String> users;
+        private ListMultimap<Set<String>, String> abars;
+        private ListMultimap<String, String> bars;
+        private ListMultimap<String, String> hosts;
+
+        private RoleMappingHolder(Settings rolesMapping) {
+
+            if (rolesMapping != null) {
+
+                final ListMultimap<String, String> users_ = ArrayListMultimap.create();
+                final ListMultimap<Set<String>, String> abars_ = ArrayListMultimap.create();
+                final ListMultimap<String, String> bars_ = ArrayListMultimap.create();
+                final ListMultimap<String, String> hosts_ = ArrayListMultimap.create();
+
+                for (final String roleMap : rolesMapping.names()) {
+
+                    final Settings roleMapSettings = rolesMapping.getByPrefix(roleMap);
+
+                    for (String u : roleMapSettings.getAsArray(".users", new String[0])) {
+                        users_.put(u, roleMap);
+                    }
+
+                    final Set<String> abar = new HashSet<String>(Arrays.asList(roleMapSettings.getAsArray(".and_backendroles", new String[0])));
+
+                    if (!abar.isEmpty()) {
+                        abars_.put(abar, roleMap);
+                    }
+
+                    for (String bar : roleMapSettings.getAsArray(".backendroles", new String[0])) {
+                        bars_.put(bar, roleMap);
+                    }
+
+                    for (String host : roleMapSettings.getAsArray(".hosts", new String[0])) {
+                        hosts_.put(host, roleMap);
+                    }
+                }
+
+                users = users_;
+                abars = abars_;
+                bars = bars_;
+                hosts = hosts_;
+            }
+        }
+
+        private Set<String> map(final User user, final TransportAddress caller) {
+
+            if (user == null || users == null || abars == null || bars == null || hosts == null) {
+                return Collections.emptySet();
+            }
+
+            final Set<String> sgRoles = new TreeSet<String>();
+
+
+                for (String p : WildcardMatcher.getAllMatchingPatterns(users.keySet(), user.getName())) {
+                    sgRoles.addAll(users.get(p));
+                }
+
+                for (String p : WildcardMatcher.getAllMatchingPatterns(bars.keySet(), user.getRoles())) {
+                    sgRoles.addAll(bars.get(p));
+                }
+
+                for (Set<String> p : abars.keySet()) {
+                    if (WildcardMatcher.allPatternsMatched(p, user.getRoles())) {
+                        sgRoles.addAll(abars.get(p));
+                    }
+                }
+
+                if (caller != null) {
+
+                    for (String p : WildcardMatcher.getAllMatchingPatterns(hosts.keySet(), caller.getAddress())) {
+                        sgRoles.addAll(hosts.get(p));
+                    }
+
+                    for (String p : WildcardMatcher.getAllMatchingPatterns(hosts.keySet(), caller.getHost())) {
+                        sgRoles.addAll(hosts.get(p));
+                    }
+
+                    
+                }
+            
+
+            return Collections.unmodifiableSet(sgRoles);
+
+        }
     }
 }

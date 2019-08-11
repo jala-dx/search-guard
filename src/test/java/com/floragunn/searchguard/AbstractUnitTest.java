@@ -179,7 +179,8 @@ public abstract class AbstractUnitTest {
                 .put("transport.type.default", "netty4")
                 .put("node.max_local_storage_nodes", 3)
                 .put("discovery.zen.minimum_master_nodes", 1)
-                .put("path.home",".");
+                .put("path.home",".")
+                .put("searchguard.nodes_dn", "CN=node-*");
     }
     // @formatter:on
 
