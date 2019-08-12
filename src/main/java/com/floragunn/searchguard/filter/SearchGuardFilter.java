@@ -148,8 +148,9 @@ public class SearchGuardFilter implements ActionFilter {
                     log.debug("userIsAdmin: " + userIsAdmin + "\n" + "interClusterRequest: " + interClusterRequest + "\ntrustedClusterRequest: " + trustedClusterRequest + "\nconfRequest: " + confRequest + "\npassThroughRequest: " + passThroughRequest);
                     log.debug("Getting auth from internal auth token.\nOld user: " + user + "\nNew auth: " + authFromInternalAuthToken);
                     log.debug(threadContext.getHeaders());
-                    user = authFromInternalAuthToken.getUser();
                 }
+
+                user = authFromInternalAuthToken.getUser();
             }
             
             if (user != null) {
