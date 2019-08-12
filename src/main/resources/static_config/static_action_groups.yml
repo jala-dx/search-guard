@@ -8,6 +8,7 @@ SGS_KIBANA_ALL_WRITE:
   static: true
   allowed_actions:
   - "kibana:saved_objects/*/write"
+  - "*"
   type: "kibana"
   description: "Allow writing in all kibana apps"
 SGS_KIBANA_ALL_READ:
