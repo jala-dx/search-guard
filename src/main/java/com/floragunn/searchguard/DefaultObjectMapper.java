@@ -18,6 +18,7 @@ import java.io.IOException;
 import java.security.AccessController;
 import java.security.PrivilegedActionException;
 import java.security.PrivilegedExceptionAction;
+import java.util.Map;
 
 import org.elasticsearch.SpecialPermission;
 
@@ -167,6 +168,26 @@ public class DefaultObjectMapper {
         }
     }
 
+    public static <T> T convertValue(Object value, JavaType jt) throws IOException {
+
+        final SecurityManager sm = System.getSecurityManager();
+
+        if (sm != null) {
+            sm.checkPermission(new SpecialPermission());
+        }
+
+        try {
+            return AccessController.doPrivileged(new PrivilegedExceptionAction<T>() {
+                @Override
+                public T run() throws Exception {
+                    return objectMapper.convertValue(value, jt);
+                }
+            });
+        } catch (final PrivilegedActionException e) {
+            throw (IOException) e.getCause();
+        }
+    }
+    
     public static TypeFactory getTypeFactory() {
         return objectMapper.getTypeFactory();
     }

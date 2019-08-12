@@ -77,7 +77,7 @@ public class SgDynamicConfiguration<T> implements ToXContent {
             if(implementationClass == null) {
                 throw new IllegalArgumentException("No implementation class found for "+ctype+" and config version "+version);
             }
-            sdc = DefaultObjectMapper.objectMapper.convertValue(map, DefaultObjectMapper.getTypeFactory().constructParametricType(SgDynamicConfiguration.class, implementationClass));
+            sdc = DefaultObjectMapper.convertValue(map, DefaultObjectMapper.getTypeFactory().constructParametricType(SgDynamicConfiguration.class, implementationClass));
         
             validate(sdc, version, ctype);
         
