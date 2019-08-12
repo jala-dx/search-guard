@@ -80,12 +80,22 @@ public class IndexJobConfigSource<JobType extends JobConfig> implements Iterable
                     this.searchRequest = new SearchRequest(indexName);
                     this.searchRequest
                             .source(new SearchSourceBuilder().query(QueryBuilders.boolQuery().mustNot(QueryBuilders.termQuery("active", false))));
+                    
+                    if (log.isDebugEnabled()) {
+                        log.debug("Executing " + this.searchRequest);
+                    }
+                    
                     this.searchResponse = client.search(searchRequest).actionGet();
                     this.searchHits = this.searchResponse.getHits();
                     this.searchHitIterator = this.searchHits.iterator();
                 } catch (IndexNotFoundException e) {
                     // TODO settings for index?
                     // TODO really good here? Maybe let REST actions create index and skip this silently?
+                    
+                    if (log.isDebugEnabled()) {
+                        log.debug("Index " + indexName + " does not exist yet. Creating new index.");
+                    }
+                    
                     client.admin().indices().create(new CreateIndexRequest(indexName)).actionGet();
 
                     this.done = true;
@@ -109,6 +119,11 @@ public class IndexJobConfigSource<JobType extends JobConfig> implements Iterable
 
         }
 
+    }
+
+    @Override
+    public String toString() {
+        return "IndexJobConfigSource [indexName=" + indexName + ", jobFactory=" + jobFactory + ", jobDistributor=" + jobDistributor + "]";
     }
 
 }

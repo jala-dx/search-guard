@@ -2470,4 +2470,10 @@ public class IndexJobStateStore<JobType extends com.floragunn.searchsupport.jobs
     public boolean isInitialized() {
         return initialized;
     }
+
+    @Override
+    public String toString() {
+        return "IndexJobStateStore [schedulerName=" + schedulerName + ", statusIndexName=" + statusIndexName + ", jobConfigSource=" + jobConfigSource
+                + ", jobFactory=" + jobFactory + "]";
+    }
 }
