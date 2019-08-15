@@ -79,7 +79,7 @@ public class IndexJobConfigSource<JobType extends JobConfig> implements Iterable
                 try {
                     this.searchRequest = new SearchRequest(indexName);
                     this.searchRequest
-                            .source(new SearchSourceBuilder().query(QueryBuilders.boolQuery().mustNot(QueryBuilders.termQuery("active", false))));
+                            .source(new SearchSourceBuilder().query(QueryBuilders.boolQuery().mustNot(QueryBuilders.termQuery("active", false))).size(10000));
                     
                     if (log.isDebugEnabled()) {
                         log.debug("Executing " + this.searchRequest);
