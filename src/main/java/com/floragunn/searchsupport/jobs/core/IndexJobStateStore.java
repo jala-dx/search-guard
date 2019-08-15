@@ -1656,7 +1656,7 @@ public class IndexJobStateStore<JobType extends com.floragunn.searchsupport.jobs
 
             QueryBuilder queryBuilder = QueryBuilders.idsQuery().addIds(triggerIds.keySet().toArray(new String[triggerIds.size()]));
 
-            SearchResponse searchResponse = client.prepareSearch(this.statusIndexName).setQuery(queryBuilder).get();
+            SearchResponse searchResponse = client.prepareSearch(this.statusIndexName).setQuery(queryBuilder).setSize(10000).get();
 
             for (SearchHit searchHit : searchResponse.getHits().getHits()) {
                 try {
