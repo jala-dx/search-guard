@@ -47,7 +47,6 @@ import org.elasticsearch.common.settings.Settings;
 import org.elasticsearch.common.transport.TransportAddress;
 
 import com.floragunn.searchguard.resolver.IndexResolverReplacer.Resolved;
-import com.floragunn.searchguard.sgconf.ConfigModelV6.SgRole;
 import com.floragunn.searchguard.sgconf.impl.SgDynamicConfiguration;
 import com.floragunn.searchguard.sgconf.impl.v7.ActionGroupsV7;
 import com.floragunn.searchguard.sgconf.impl.v7.RoleMappingsV7;
@@ -59,6 +58,7 @@ import com.floragunn.searchguard.support.WildcardMatcher;
 import com.floragunn.searchguard.user.User;
 import com.google.common.base.Joiner;
 import com.google.common.collect.ArrayListMultimap;
+import com.google.common.collect.ImmutableSet;
 import com.google.common.collect.Iterables;
 import com.google.common.collect.ListMultimap;
 import com.google.common.collect.MultimapBuilder.SetMultimapBuilder;
@@ -976,10 +976,12 @@ public class ConfigModelV7 extends ConfigModel {
     
     private class TenantHolder {
 
-        private SetMultimap<String, Tuple<String, Boolean>> tenantsMM = null;
+        private static final String KIBANA_ALL_SAVED_OBJECTS_WRITE = "kibana:saved_objects/*/write";
+        private final Set<String> KIBANA_ALL_SAVED_OBJECTS_WRITE_SET = ImmutableSet.of(KIBANA_ALL_SAVED_OBJECTS_WRITE);
+        private SetMultimap<String, Tuple<String, Set<String>>> tenantsMM = null;
 
         public TenantHolder(SgDynamicConfiguration<RoleV7> roles, SgDynamicConfiguration<TenantV7> definedTenants) {
-            final Set<Future<Tuple<String, Set<Tuple<String, Boolean>>>>> futures = new HashSet<>(roles.getCEntries().size());
+            final Set<Future<Tuple<String, Set<Tuple<String, Set<String>>>>>> futures = new HashSet<>(roles.getCEntries().size());
 
             final ExecutorService execs = Executors.newFixedThreadPool(10);
 
@@ -989,10 +991,10 @@ public class ConfigModelV7 extends ConfigModel {
                     continue;
                 }
 
-                Future<Tuple<String, Set<Tuple<String, Boolean>>>> future = execs.submit(new Callable<Tuple<String, Set<Tuple<String, Boolean>>>>() {
+                Future<Tuple<String, Set<Tuple<String, Set<String>>>>> future = execs.submit(new Callable<Tuple<String, Set<Tuple<String, Set<String>>>>>() {
                     @Override
-                    public Tuple<String, Set<Tuple<String, Boolean>>> call() throws Exception {
-                        final Set<Tuple<String, Boolean>> tuples = new HashSet<>();
+                    public Tuple<String, Set<Tuple<String, Set<String>>>> call() throws Exception {
+                        final Set<Tuple<String, Set<String>>> tuples = new HashSet<>();
                         final List<RoleV7.Tenant> tenants = sgRole.getValue().getTenant_permissions();
 
                         if (tenants != null) {
@@ -1000,12 +1002,12 @@ public class ConfigModelV7 extends ConfigModel {
                             for (RoleV7.Tenant tenant : tenants) {
                                 
                                 for(String matchingTenant: WildcardMatcher.getMatchAny(tenant.getTenant_patterns(), definedTenants.getCEntries().keySet())) {
-                                    tuples.add(new Tuple<String, Boolean>(matchingTenant, agr.resolvedActions(tenant.getAllowed_actions()).contains("kibana:saved_objects/*/write")));
+                                    tuples.add(new Tuple<String, Set<String>>(matchingTenant, agr.resolvedActions(tenant.getAllowed_actions())));
                                 }
                             }
                         }
 
-                        return new Tuple<String, Set<Tuple<String, Boolean>>>(sgRole.getKey(), tuples);
+                        return new Tuple<String, Set<Tuple<String, Set<String>>>>(sgRole.getKey(), tuples);
                     }
                 });
 
@@ -1023,20 +1025,20 @@ public class ConfigModelV7 extends ConfigModel {
             }
 
             try {
-                final SetMultimap<String, Tuple<String, Boolean>> tenantsMM_ = SetMultimapBuilder.hashKeys(futures.size()).hashSetValues(16).build();
+                final SetMultimap<String, Tuple<String, Set<String>>> tenantsMM_ = SetMultimapBuilder.hashKeys(futures.size()).hashSetValues(16).build();
 
-                for (Future<Tuple<String, Set<Tuple<String, Boolean>>>> future : futures) {
-                    Tuple<String, Set<Tuple<String, Boolean>>> result = future.get();
+                for (Future<Tuple<String, Set<Tuple<String, Set<String>>>>> future : futures) {
+                    Tuple<String, Set<Tuple<String, Set<String>>>> result = future.get();
                     tenantsMM_.putAll(result.v1(), result.v2());
                 }
 
                 tenantsMM = tenantsMM_;
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
-                log.error("Thread interrupted (2) while loading roles");
+                log.error("Thread interrupted (2) while loading tenants");
                 return;
             } catch (ExecutionException e) {
-                log.error("Error while updating roles: {}", e.getCause(), e.getCause());
+                log.error("Error while updating tenants: {}", e.getCause(), e.getCause());
                 throw ExceptionsHelper.convertToElastic(e);
             }
 
@@ -1053,7 +1055,7 @@ public class ConfigModelV7 extends ConfigModel {
 
             tenantsMM.entries().stream().filter(e -> roles.contains(e.getKey())).filter(e -> !user.getName().equals(e.getValue().v1())).forEach(e -> {
                 final String tenant = e.getValue().v1();
-                final boolean rw = e.getValue().v2();
+                final boolean rw = e.getValue().v2().contains(KIBANA_ALL_SAVED_OBJECTS_WRITE);
 
                 if (rw || !result.containsKey(tenant)) { //RW outperforms RO
                     result.put(tenant, rw);
@@ -1067,6 +1069,36 @@ public class ConfigModelV7 extends ConfigModel {
                     || roles.contains("SGS_ALL_ACCESS")
                     )) {
                 result.put("SGS_GLOBAL_TENANT", true);
+            }
+
+            return Collections.unmodifiableMap(result);
+        }
+        
+        public Map<String, Set<String>> mapTenantPermissions(final User user, Set<String> roles) {
+
+            if (user == null || tenantsMM == null) {
+                return Collections.emptyMap();
+            }
+
+            final Map<String, Set<String>> result = new HashMap<>(roles.size());
+            result.put(user.getName(), ImmutableSet.of("*"));
+            
+            tenantsMM.entries().stream().filter(e -> roles.contains(e.getKey())).filter(e -> !user.getName().equals(e.getValue().v1())).forEach(e -> {
+
+                if(result.get(e.getValue().v1()) != null) {
+                    result.get(e.getValue().v1()).addAll(e.getValue().v2());
+                } else {
+                    result.put(e.getValue().v1(), new HashSet<String>((e.getValue().v2())));
+                }
+            });
+            
+            if(!result.containsKey("SGS_GLOBAL_TENANT") && (
+                    roles.contains("sg_kibana_user") 
+                    || roles.contains("SGS_KIBANA_USER")
+                    || roles.contains("sg_all_access")
+                    || roles.contains("SGS_ALL_ACCESS")
+                    )) {
+                result.put("SGS_GLOBAL_TENANT", KIBANA_ALL_SAVED_OBJECTS_WRITE_SET);
             }
 
             return Collections.unmodifiableMap(result);
@@ -1187,13 +1219,17 @@ public class ConfigModelV7 extends ConfigModel {
     }
     
     
-    
-    
+    @Override
+    public Map<String, Set<String>> mapTenantPermissions(User user, Set<String> roles) {
+        return tenantHolder.mapTenantPermissions(user, roles);
+    }
 
+    @Override
     public Map<String, Boolean> mapTenants(User user, Set<String> roles) {
         return tenantHolder.mapTenants(user, roles);
     }
 
+    @Override
     public Set<String> mapSgRoles(User user, TransportAddress caller) {
         return roleMappingHolder.map(user, caller);
     }
