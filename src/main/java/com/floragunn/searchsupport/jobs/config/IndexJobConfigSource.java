@@ -1,5 +1,6 @@
 package com.floragunn.searchsupport.jobs.config;
 
+import java.io.IOException;
 import java.text.ParseException;
 import java.util.Iterator;
 
@@ -107,7 +108,7 @@ public class IndexJobConfigSource<JobType extends JobConfig> implements Iterable
                 SearchHit searchHit = this.searchHitIterator.next();
                 try {
                     this.current = jobFactory.createFromBytes(searchHit.getId(), searchHit.getSourceRef(), searchHit.getVersion());
-                } catch (ParseException e) {
+                } catch (ParseException | IOException e) {
                     log.error("Error while parsing job configuration " + indexName + "/" + searchHit.getId() + ":\n" + searchHit.getSourceAsString(),
                             e);
                 }
