@@ -1,5 +1,6 @@
 package com.floragunn.searchsupport.jobs.config;
 
+import java.io.IOException;
 import java.text.ParseException;
 import java.time.Duration;
 import java.util.ArrayList;
@@ -61,7 +62,7 @@ public abstract class AbstractJobConfigFactory<JobConfigType extends JobConfig> 
     }
 
     @Override
-    public JobConfigType createFromBytes(String id, BytesReference source, long version) throws ParseException {
+    public JobConfigType createFromBytes(String id, BytesReference source, long version) throws ParseException, IOException {
         ReadContext ctx = JsonPath.using(JSON_PATH_CONFIG).parse(source.utf8ToString());
 
         return createFromReadContext(id, ctx, version);
@@ -82,7 +83,7 @@ public abstract class AbstractJobConfigFactory<JobConfigType extends JobConfig> 
         return jobBuilder.build();
     }
 
-    abstract protected JobConfigType createFromReadContext(String id, ReadContext ctx, long version) throws ParseException;
+    abstract protected JobConfigType createFromReadContext(String id, ReadContext ctx, long version) throws ParseException, IOException;
 
     protected JobKey getJobKey(String id, ReadContext ctx) {
         return new JobKey(id, group);
