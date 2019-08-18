@@ -1,6 +1,5 @@
 package com.floragunn.searchsupport.jobs.config.schedule;
 
-import java.util.ArrayList;
 import java.util.Date;
 import java.util.List;
 
@@ -28,9 +27,12 @@ public abstract class HumanReadableCronTrigger<T extends Trigger> extends Abstra
 
     @Override
     public void setNextFireTime(Date nextFireTime) {
+        CronTriggerImpl trigger = getNextFireTimeCronTrigger();
 
-        for (CronTriggerImpl delegate : generatedCronTriggers) {
-            delegate.setNextFireTime(nextFireTime);
+        if (trigger != null) {
+            trigger.setNextFireTime(nextFireTime);
+        } else if (generatedCronTriggers.size() > 0) {
+            throw new RuntimeException("Could not update nextFireTime: " + generatedCronTriggers);
         }
     }
 
@@ -45,13 +47,16 @@ public abstract class HumanReadableCronTrigger<T extends Trigger> extends Abstra
 
     @Override
     public void triggered(Calendar calendar) {
-        Date nextFireTime = getNextFireTime();
-        previousFireTime = nextFireTime;
+        Date oldNextFireTime = getNextFireTime();
+        previousFireTime = oldNextFireTime;
 
-        nextFireTime = getFireTimeAfter(nextFireTime, calendar);
+        for (CronTriggerImpl delegate : generatedCronTriggers) {
+            if (delegate.getNextFireTime() == null || !delegate.getNextFireTime().after(oldNextFireTime)) {
+                delegate.setNextFireTime(getFireTimeAfter(delegate, oldNextFireTime, calendar));
 
-        // TODO only update one
-        setNextFireTime(nextFireTime);
+                delegate.setPreviousFireTime(previousFireTime);
+            }
+        }
     }
 
     @Override
@@ -215,12 +220,19 @@ public abstract class HumanReadableCronTrigger<T extends Trigger> extends Abstra
         return result;
     }
 
-    private Date getFireTimeAfter(Date afterTime, Calendar cal) {
-        Date result = getFireTimeAfter(afterTime);
-        while (result != null && cal != null && !cal.isTimeIncluded(result.getTime())) {
-            result = getFireTimeAfter(result);
+    private CronTriggerImpl getNextFireTimeCronTrigger() {
+        CronTriggerImpl result = null;
+
+        for (CronTriggerImpl delegate : generatedCronTriggers) {
+            Date delegateNextFireTime = delegate.getNextFireTime();
+
+            if (delegateNextFireTime != null
+                    && (result == null || result.getNextFireTime() == null || result.getNextFireTime().after(delegateNextFireTime))) {
+                result = delegate;
+            }
         }
 
         return result;
     }
+
 }
