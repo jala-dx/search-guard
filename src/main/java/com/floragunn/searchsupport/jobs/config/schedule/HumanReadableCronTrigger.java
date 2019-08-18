@@ -1,11 +1,13 @@
 package com.floragunn.searchsupport.jobs.config.schedule;
 
+import java.text.ParseException;
 import java.util.Date;
 import java.util.List;
 
 import org.elasticsearch.common.xcontent.ToXContentObject;
 import org.quartz.Calendar;
 import org.quartz.CronTrigger;
+import org.quartz.TimeOfDay;
 import org.quartz.Trigger;
 import org.quartz.impl.triggers.AbstractTrigger;
 import org.quartz.impl.triggers.CronTriggerImpl;
@@ -233,6 +235,63 @@ public abstract class HumanReadableCronTrigger<T extends Trigger> extends Abstra
         }
 
         return result;
+    }
+
+    protected static String format(TimeOfDay timeOfDay) {
+        StringBuilder result = new StringBuilder(timeOfDay.getHour());
+
+        result.append(':');
+
+        if (timeOfDay.getMinute() < 10) {
+            result.append('0');
+        }
+
+        result.append(timeOfDay.getMinute());
+
+        if (timeOfDay.getSecond() != 0) {
+            result.append(':');
+
+            if (timeOfDay.getSecond() < 10) {
+                result.append('0');
+            }
+
+            result.append(timeOfDay.getSecond());
+        }
+
+        return result.toString();
+    }
+
+    protected static TimeOfDay parseTimeOfDay(String string) throws ParseException {
+        try {
+
+            int colon = string.indexOf(':');
+
+            if (colon == -1) {
+                int hour = Integer.parseInt(string);
+
+                return new TimeOfDay(hour, 0);
+            } else {
+                int hour = Integer.parseInt(string.substring(0, colon));
+                int minute;
+                int second = 0;
+
+                int nextColon = string.indexOf(':', colon + 1);
+
+                if (nextColon == -1) {
+                    minute = Integer.parseInt(string.substring(colon + 1));
+                } else {
+                    minute = Integer.parseInt(string.substring(colon + 1, nextColon));
+                    second = Integer.parseInt(string.substring(nextColon + 1));
+                }
+
+                return new TimeOfDay(hour, minute, second);
+            }
+
+        } catch (
+
+        NumberFormatException e) {
+            throw new ParseException("Illegal time format: " + string, -1);
+        }
     }
 
 }

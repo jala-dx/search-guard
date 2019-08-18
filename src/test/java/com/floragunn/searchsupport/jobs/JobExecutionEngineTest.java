@@ -265,7 +265,7 @@ public class JobExecutionEngineTest extends SingleClusterTest {
             LocalDate localDate = LocalDate.now();
             LocalTime localTime = LocalTime.now();
 
-            String jobConfig = createJobConfig(1, "basic", null, "weekly", "on", localDate.getDayOfWeek().toString().toLowerCase(), "at",
+            String jobConfig = createJobConfig(1, "weekly_schedule", null, "weekly", "on", localDate.getDayOfWeek().toString().toLowerCase(), "at",
                     localTime.plus(Duration.ofSeconds(5)).truncatedTo(ChronoUnit.SECONDS));
 
             tc.index(new IndexRequest("testjobconfig").setRefreshPolicy(RefreshPolicy.IMMEDIATE).source(jobConfig, XContentType.JSON)).actionGet();
@@ -282,7 +282,82 @@ public class JobExecutionEngineTest extends SingleClusterTest {
 
             Thread.sleep(10 * 1000);
 
-            int count = TestJob.getCounter("basic");
+            int count = TestJob.getCounter("weekly_schedule");
+
+            assertEquals(1, count);
+
+            clusterHelper.stopCluster();
+
+        }
+
+    }
+
+    @Test
+    public void monthlyScheduleTest() throws Exception {
+        final Settings settings = Settings.builder().build();
+
+        setup(settings);
+
+        try (Client tc = getInternalTransportClient()) {
+
+            LocalDate localDate = LocalDate.now();
+            LocalTime localTime = LocalTime.now();
+
+            String jobConfig = createJobConfig(1, "monthly_schedule", null, "monthly", "on", localDate.getDayOfMonth(), "at",
+                    localTime.plus(Duration.ofSeconds(5)).truncatedTo(ChronoUnit.SECONDS));
+
+            tc.index(new IndexRequest("testjobconfig").setRefreshPolicy(RefreshPolicy.IMMEDIATE).source(jobConfig, XContentType.JSON)).actionGet();
+
+            for (PluginAwareNode node : this.clusterHelper.allNodes()) {
+                ClusterService clusterService = node.injector().getInstance(ClusterService.class);
+
+                Scheduler scheduler = new SchedulerBuilder<DefaultJobConfig>().client(tc).name("test_" + clusterService.getNodeName())
+                        .configIndex("testjobconfig").jobConfigFactory(new ConstantHashJobConfig.Factory(TestJob.class)).distributed(clusterService)
+                        .nodeComparator(new NodeNameComparator(clusterService)).build();
+
+                scheduler.start();
+            }
+
+            Thread.sleep(10 * 1000);
+
+            int count = TestJob.getCounter("monthly_schedule");
+
+            assertEquals(1, count);
+
+            clusterHelper.stopCluster();
+
+        }
+
+    }
+
+    @Test
+    public void dailyScheduleTest() throws Exception {
+        final Settings settings = Settings.builder().build();
+
+        setup(settings);
+
+        try (Client tc = getInternalTransportClient()) {
+
+            LocalTime localTime = LocalTime.now();
+
+            String jobConfig = createJobConfig(1, "daily_schedule", null, "daily", "at",
+                    localTime.plus(Duration.ofSeconds(5)).truncatedTo(ChronoUnit.SECONDS));
+
+            tc.index(new IndexRequest("testjobconfig").setRefreshPolicy(RefreshPolicy.IMMEDIATE).source(jobConfig, XContentType.JSON)).actionGet();
+
+            for (PluginAwareNode node : this.clusterHelper.allNodes()) {
+                ClusterService clusterService = node.injector().getInstance(ClusterService.class);
+
+                Scheduler scheduler = new SchedulerBuilder<DefaultJobConfig>().client(tc).name("test_" + clusterService.getNodeName())
+                        .configIndex("testjobconfig").jobConfigFactory(new ConstantHashJobConfig.Factory(TestJob.class)).distributed(clusterService)
+                        .nodeComparator(new NodeNameComparator(clusterService)).build();
+
+                scheduler.start();
+            }
+
+            Thread.sleep(10 * 1000);
+
+            int count = TestJob.getCounter("daily_schedule");
 
             assertEquals(1, count);
 

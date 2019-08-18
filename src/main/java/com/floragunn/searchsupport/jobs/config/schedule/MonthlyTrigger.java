@@ -2,7 +2,6 @@ package com.floragunn.searchsupport.jobs.config.schedule;
 
 import java.io.IOException;
 import java.text.ParseException;
-import java.time.DayOfWeek;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
@@ -10,21 +9,19 @@ import java.util.List;
 import org.elasticsearch.common.xcontent.XContentBuilder;
 import org.quartz.CronExpression;
 import org.quartz.CronScheduleBuilder;
-import org.quartz.DateBuilder;
 import org.quartz.ScheduleBuilder;
 import org.quartz.TimeOfDay;
 import org.quartz.impl.triggers.CronTriggerImpl;
 
 import com.fasterxml.jackson.databind.JsonNode;
 
-public class WeeklyTrigger extends HumanReadableCronTrigger<WeeklyTrigger> {
+public class MonthlyTrigger extends HumanReadableCronTrigger<MonthlyTrigger> {
 
-    private static final long serialVersionUID = -8707981523995856355L;
-
-    private List<DayOfWeek> on;
+    private static final long serialVersionUID = -6518785696829462600L;
+    private List<Integer> on;
     private List<TimeOfDay> at;
 
-    public WeeklyTrigger(List<DayOfWeek> on, List<TimeOfDay> at) {
+    public MonthlyTrigger(List<Integer> on, List<TimeOfDay> at) {
         this.on = Collections.unmodifiableList(on);
         this.at = Collections.unmodifiableList(at);
 
@@ -32,7 +29,7 @@ public class WeeklyTrigger extends HumanReadableCronTrigger<WeeklyTrigger> {
     }
 
     @Override
-    public ScheduleBuilder<WeeklyTrigger> getScheduleBuilder() {
+    public ScheduleBuilder<MonthlyTrigger> getScheduleBuilder() {
         // TODO Auto-generated method stub
         return null;
     }
@@ -50,11 +47,11 @@ public class WeeklyTrigger extends HumanReadableCronTrigger<WeeklyTrigger> {
         return result;
     }
 
-    public List<DayOfWeek> getOn() {
+    public List<Integer> getOn() {
         return on;
     }
 
-    public void setOn(List<DayOfWeek> on) {
+    public void setOn(List<Integer> on) {
         this.on = on;
     }
 
@@ -71,15 +68,9 @@ public class WeeklyTrigger extends HumanReadableCronTrigger<WeeklyTrigger> {
         builder.startObject();
 
         if (on.size() == 1) {
-            builder.field("on", on.get(0).toString().toLowerCase());
+            builder.field("on", on.get(0));
         } else {
-            builder.startArray("on");
-
-            for (DayOfWeek dayOfWeek : on) {
-                builder.value(dayOfWeek.toString().toLowerCase());
-            }
-
-            builder.endArray();
+            builder.array("on", on);
         }
 
         if (at.size() == 1) {
@@ -99,8 +90,8 @@ public class WeeklyTrigger extends HumanReadableCronTrigger<WeeklyTrigger> {
         return builder;
     }
 
-    public static WeeklyTrigger create(JsonNode jsonNode) throws ParseException {
-        List<DayOfWeek> on;
+    public static MonthlyTrigger create(JsonNode jsonNode) throws ParseException {
+        List<Integer> on;
         List<TimeOfDay> at;
 
         JsonNode onNode = jsonNode.get("on");
@@ -109,10 +100,10 @@ public class WeeklyTrigger extends HumanReadableCronTrigger<WeeklyTrigger> {
             on = new ArrayList<>(onNode.size());
 
             for (JsonNode onNodeElement : onNode) {
-                on.add(getDayOfWeek(onNodeElement.textValue()));
+                on.add(onNodeElement.asInt());
             }
-        } else if (onNode.isTextual()) {
-            on = Collections.singletonList(getDayOfWeek(onNode.textValue()));
+        } else if (onNode.isNumber()) {
+            on = Collections.singletonList(onNode.asInt());
         } else {
             on = Collections.emptyList();
         }
@@ -131,41 +122,34 @@ public class WeeklyTrigger extends HumanReadableCronTrigger<WeeklyTrigger> {
             at = Collections.emptyList();
         }
 
-        return new WeeklyTrigger(on, at);
+        return new MonthlyTrigger(on, at);
     }
 
-    private static int toQuartz(DayOfWeek dayOfWeek) {
-        if (dayOfWeek == DayOfWeek.SUNDAY) {
-            return DateBuilder.SUNDAY;
-        } else {
-            return dayOfWeek.getValue() + 1;
-        }
-    }
-
-    private static CronExpression createCronExpression(TimeOfDay timeOfDay, List<DayOfWeek> on) {
+    private static CronExpression createCronExpression(TimeOfDay timeOfDay, List<Integer> on) {
         try {
             StringBuilder result = new StringBuilder();
 
             result.append(timeOfDay.getSecond()).append(' ');
             result.append(timeOfDay.getMinute()).append(' ');
             result.append(timeOfDay.getHour()).append(' ');
-            result.append("? * ");
 
             if (on.size() == 0) {
                 result.append("*");
             } else {
                 boolean first = true;
 
-                for (DayOfWeek dayOfWeek : on) {
+                for (Integer dayOfMonth : on) {
                     if (first) {
                         first = false;
                     } else {
                         result.append(",");
                     }
 
-                    result.append(toQuartz(dayOfWeek));
+                    result.append(dayOfMonth);
                 }
             }
+
+            result.append(" * ?");
 
             return new CronExpression(result.toString());
         } catch (ParseException e) {
@@ -173,31 +157,4 @@ public class WeeklyTrigger extends HumanReadableCronTrigger<WeeklyTrigger> {
         }
     }
 
-    private static DayOfWeek getDayOfWeek(String string) throws ParseException {
-        switch (string) {
-        case "sunday":
-        case "sun":
-            return DayOfWeek.SUNDAY;
-        case "monday":
-        case "mon":
-            return DayOfWeek.MONDAY;
-        case "tuesday":
-        case "tue":
-            return DayOfWeek.TUESDAY;
-        case "wednesday":
-        case "wed":
-            return DayOfWeek.WEDNESDAY;
-        case "thursday":
-        case "thu":
-            return DayOfWeek.THURSDAY;
-        case "friday":
-        case "fri":
-            return DayOfWeek.FRIDAY;
-        case "saturday":
-        case "sat":
-            return DayOfWeek.SATURDAY;
-        default:
-            throw new ParseException("Illegal day of week: " + string, -1);
-        }
-    }
 }

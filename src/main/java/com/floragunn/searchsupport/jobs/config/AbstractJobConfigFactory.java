@@ -24,6 +24,8 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.fasterxml.jackson.databind.node.TextNode;
+import com.floragunn.searchsupport.jobs.config.schedule.DailyTrigger;
+import com.floragunn.searchsupport.jobs.config.schedule.MonthlyTrigger;
 import com.floragunn.searchsupport.jobs.config.schedule.WeeklyTrigger;
 import com.floragunn.searchsupport.util.DurationFormat;
 import com.floragunn.searchsupport.util.JacksonTools;
@@ -126,11 +128,23 @@ public abstract class AbstractJobConfigFactory<JobConfigType extends JobConfig> 
         }
 
         Object weeklyTriggers = ctx.read(weeklyScheduleTriggerPath);
-        
+
         if (weeklyTriggers != null) {
             triggers.addAll(getWeeklyTriggers(jobKey, weeklyTriggers));
         }
-        
+
+        Object dailyTriggers = ctx.read(dailyScheduleTriggerPath);
+
+        if (dailyTriggers != null) {
+            triggers.addAll(getDailyTriggers(jobKey, dailyTriggers));
+        }
+
+        Object monthlyTriggers = ctx.read(monthlyScheduleTriggerPath);
+
+        if (monthlyTriggers != null) {
+            triggers.addAll(getMonthlyTriggers(jobKey, monthlyTriggers));
+        }
+
         return triggers;
     }
 
@@ -196,6 +210,34 @@ public abstract class AbstractJobConfigFactory<JobConfigType extends JobConfig> 
         return result;
     }
 
+    protected List<Trigger> getMonthlyTriggers(JobKey jobKey, Object scheduleTriggers) throws ParseException {
+        List<Trigger> result = new ArrayList<>();
+
+        if (scheduleTriggers instanceof ObjectNode) {
+            result.add(createMonthlyTrigger(jobKey, (ObjectNode) scheduleTriggers));
+        } else if (scheduleTriggers instanceof ArrayNode) {
+            for (JsonNode trigger : (ArrayNode) scheduleTriggers) {
+                result.add(createMonthlyTrigger(jobKey, trigger));
+            }
+        }
+
+        return result;
+    }
+
+    protected List<Trigger> getDailyTriggers(JobKey jobKey, Object scheduleTriggers) throws ParseException {
+        List<Trigger> result = new ArrayList<>();
+
+        if (scheduleTriggers instanceof ObjectNode) {
+            result.add(createDailyTrigger(jobKey, (ObjectNode) scheduleTriggers));
+        } else if (scheduleTriggers instanceof ArrayNode) {
+            for (JsonNode trigger : (ArrayNode) scheduleTriggers) {
+                result.add(createDailyTrigger(jobKey, trigger));
+            }
+        }
+
+        return result;
+    }
+
     protected String getTriggerKey(String trigger) {
         return DigestUtils.md5Hex(trigger);
     }
@@ -219,6 +261,26 @@ public abstract class AbstractJobConfigFactory<JobConfigType extends JobConfig> 
         String triggerKey = getTriggerKey(jsonNode.toString());
 
         WeeklyTrigger trigger = WeeklyTrigger.create(jsonNode);
+        trigger.setJobKey(jobKey);
+        trigger.setKey(new TriggerKey(jobKey.getName() + "___" + triggerKey, group));
+
+        return trigger;
+    }
+
+    protected Trigger createMonthlyTrigger(JobKey jobKey, JsonNode jsonNode) throws ParseException {
+        String triggerKey = getTriggerKey(jsonNode.toString());
+
+        MonthlyTrigger trigger = MonthlyTrigger.create(jsonNode);
+        trigger.setJobKey(jobKey);
+        trigger.setKey(new TriggerKey(jobKey.getName() + "___" + triggerKey, group));
+
+        return trigger;
+    }
+
+    protected Trigger createDailyTrigger(JobKey jobKey, JsonNode jsonNode) throws ParseException {
+        String triggerKey = getTriggerKey(jsonNode.toString());
+
+        DailyTrigger trigger = DailyTrigger.create(jsonNode);
         trigger.setJobKey(jobKey);
         trigger.setKey(new TriggerKey(jobKey.getName() + "___" + triggerKey, group));
 
