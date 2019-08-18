@@ -3,7 +3,15 @@ package com.floragunn.searchsupport.jobs;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertTrue;
 
+import java.time.Duration;
+import java.time.LocalDate;
+import java.time.LocalTime;
+import java.time.temporal.ChronoUnit;
+import java.time.temporal.TemporalUnit;
+import java.util.Calendar;
+import java.util.GregorianCalendar;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
@@ -73,7 +81,7 @@ public class JobExecutionEngineTest extends SingleClusterTest {
 
         try (Client tc = getInternalTransportClient()) {
 
-            String jobConfig = createJobConfig(1, "basic", null, "*/1 * * * * ?");
+            String jobConfig = createCronJobConfig(1, "basic", null, "*/1 * * * * ?");
 
             tc.index(new IndexRequest("testjobconfig").setRefreshPolicy(RefreshPolicy.IMMEDIATE).source(jobConfig, XContentType.JSON)).actionGet();
 
@@ -107,7 +115,7 @@ public class JobExecutionEngineTest extends SingleClusterTest {
 
         try (Client tc = getInternalTransportClient()) {
 
-            String jobConfig = createJobConfig(1, "nonconcurrent", 1500, "*/1 * * * * ?");
+            String jobConfig = createCronJobConfig(1, "nonconcurrent", 1500, "*/1 * * * * ?");
 
             tc.index(new IndexRequest("testjobconfig").setRefreshPolicy(RefreshPolicy.IMMEDIATE).source(jobConfig, XContentType.JSON)).actionGet();
 
@@ -143,7 +151,7 @@ public class JobExecutionEngineTest extends SingleClusterTest {
 
         try (Client tc = getInternalTransportClient()) {
 
-            String jobConfig = createJobConfig(1, "nodeFilterTest", null, "*/1 * * * * ?");
+            String jobConfig = createCronJobConfig(1, "nodeFilterTest", null, "*/1 * * * * ?");
 
             tc.index(new IndexRequest("testjobconfig").setRefreshPolicy(RefreshPolicy.IMMEDIATE).source(jobConfig, XContentType.JSON)).actionGet();
 
@@ -178,7 +186,7 @@ public class JobExecutionEngineTest extends SingleClusterTest {
 
         try (Client tc = getInternalTransportClient()) {
 
-            String jobConfig = createJobConfig(1, "emptyNodeFilterTest", null, "*/1 * * * * ?");
+            String jobConfig = createCronJobConfig(1, "emptyNodeFilterTest", null, "*/1 * * * * ?");
 
             tc.index(new IndexRequest("testjobconfig").setRefreshPolicy(RefreshPolicy.IMMEDIATE).source(jobConfig, XContentType.JSON)).actionGet();
 
@@ -214,7 +222,7 @@ public class JobExecutionEngineTest extends SingleClusterTest {
 
         try (Client tc = getInternalTransportClient()) {
 
-            String jobConfig = createJobConfig(1, "basic", null, "*/1 * * * * ?");
+            String jobConfig = createCronJobConfig(1, "basic", null, "*/1 * * * * ?");
 
             tc.index(new IndexRequest("testjobconfig").setRefreshPolicy(RefreshPolicy.IMMEDIATE).source(jobConfig, XContentType.JSON)).actionGet();
 
@@ -233,7 +241,7 @@ public class JobExecutionEngineTest extends SingleClusterTest {
 
             Thread.sleep(500);
 
-            jobConfig = createJobConfig(1, "late", null, "*/1 * * * * ?");
+            jobConfig = createCronJobConfig(1, "late", null, "*/1 * * * * ?");
             tc.index(new IndexRequest("testjobconfig").setRefreshPolicy(RefreshPolicy.IMMEDIATE).source(jobConfig, XContentType.JSON)).actionGet();
             SchedulerConfigUpdateAction.send(tc, "test");
 
@@ -244,10 +252,47 @@ public class JobExecutionEngineTest extends SingleClusterTest {
             assertTrue("count is " + count, count >= 1);
 
         }
+    }
+
+    @Test
+    public void weeklyScheduleTest() throws Exception {
+        final Settings settings = Settings.builder().build();
+
+        setup(settings);
+
+        try (Client tc = getInternalTransportClient()) {
+
+            LocalDate localDate = LocalDate.now();
+            LocalTime localTime = LocalTime.now();
+
+            String jobConfig = createJobConfig(1, "basic", null, "weekly", "on", localDate.getDayOfWeek().toString().toLowerCase(), "at",
+                    localTime.plus(Duration.ofSeconds(5)).truncatedTo(ChronoUnit.SECONDS));
+
+            tc.index(new IndexRequest("testjobconfig").setRefreshPolicy(RefreshPolicy.IMMEDIATE).source(jobConfig, XContentType.JSON)).actionGet();
+
+            for (PluginAwareNode node : this.clusterHelper.allNodes()) {
+                ClusterService clusterService = node.injector().getInstance(ClusterService.class);
+
+                Scheduler scheduler = new SchedulerBuilder<DefaultJobConfig>().client(tc).name("test_" + clusterService.getNodeName())
+                        .configIndex("testjobconfig").jobConfigFactory(new ConstantHashJobConfig.Factory(TestJob.class)).distributed(clusterService)
+                        .nodeComparator(new NodeNameComparator(clusterService)).build();
+
+                scheduler.start();
+            }
+
+            Thread.sleep(10 * 1000);
+
+            int count = TestJob.getCounter("basic");
+
+            assertEquals(1, count);
+
+            clusterHelper.stopCluster();
+
+        }
 
     }
 
-    private String createJobConfig(int hash, String name, Integer delay, String... cronSchedule) {
+    private String createCronJobConfig(int hash, String name, Integer delay, String... cronSchedule) {
         StringBuilder result = new StringBuilder("{");
 
         result.append("\"hash\": ").append(hash).append(",");
@@ -280,6 +325,56 @@ public class JobExecutionEngineTest extends SingleClusterTest {
         }
 
         result.append("}}}");
+
+        return result.toString();
+    }
+
+    private String createJobConfig(int hash, String name, Integer delay, String scheduleType, Object... schedule) {
+        StringBuilder result = new StringBuilder("{");
+
+        result.append("\"hash\": ").append(hash).append(",");
+
+        if (name != null) {
+            result.append("\"name\": \"").append(name).append("\",");
+        }
+
+        if (delay != null) {
+            result.append("\"delay\": ").append(delay).append(",");
+        }
+
+        result.append("\"trigger\": {\"schedule\": {\"").append(scheduleType).append("\": {");
+
+        for (int i = 0; i < schedule.length; i += 2) {
+            if (i > 0) {
+                result.append(",");
+            }
+
+            result.append("\"").append(schedule[i]).append("\":");
+
+            if (schedule[i + 1] instanceof List) {
+                result.append("[");
+
+                boolean first = true;
+
+                for (Object element : (List<?>) schedule[i + 1]) {
+                    if (first) {
+                        first = false;
+                    } else {
+                        result.append(",");
+                    }
+
+                    result.append("\"").append(element).append("\"");
+                }
+
+                result.append("]");
+            } else if (schedule[i + 1] instanceof Number) {
+                result.append(schedule[i + 1]);
+            } else {
+                result.append("\"").append(schedule[i + 1]).append("\"");
+            }
+        }
+
+        result.append("}}}}");
 
         return result.toString();
     }
