@@ -1,0 +1,113 @@
+package com.floragunn.searchsupport.jobs.config.schedule;
+
+import java.io.IOException;
+import java.text.ParseException;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.List;
+
+import org.elasticsearch.common.xcontent.XContentBuilder;
+import org.quartz.CronExpression;
+import org.quartz.CronScheduleBuilder;
+import org.quartz.ScheduleBuilder;
+import org.quartz.TimeOfDay;
+import org.quartz.impl.triggers.CronTriggerImpl;
+
+import com.fasterxml.jackson.databind.JsonNode;
+
+public class DailyTrigger extends HumanReadableCronTrigger<DailyTrigger> {
+
+    private static final long serialVersionUID = 8163341554630381366L;
+
+    private List<TimeOfDay> at;
+
+    public DailyTrigger(List<TimeOfDay> at) {
+        this.at = Collections.unmodifiableList(at);
+
+        init();
+    }
+
+    @Override
+    public ScheduleBuilder<DailyTrigger> getScheduleBuilder() {
+        // TODO Auto-generated method stub
+        return null;
+    }
+
+    @Override
+    protected List<CronTriggerImpl> buildCronTriggers() {
+        List<CronTriggerImpl> result = new ArrayList<>();
+
+        for (TimeOfDay timeOfDay : at) {
+            CronTriggerImpl cronTigger = (CronTriggerImpl) CronScheduleBuilder.cronSchedule(createCronExpression(timeOfDay)).build();
+
+            result.add(cronTigger);
+        }
+
+        return result;
+    }
+
+    public List<TimeOfDay> getAt() {
+        return at;
+    }
+
+    public void setAt(List<TimeOfDay> at) {
+        this.at = at;
+    }
+
+    @Override
+    public XContentBuilder toXContent(XContentBuilder builder, Params params) throws IOException {
+        builder.startObject();
+
+        if (at.size() == 1) {
+            builder.field("at", format(at.get(0)));
+        } else {
+            builder.startArray("at");
+
+            for (TimeOfDay timeOfDay : at) {
+                builder.value(format(timeOfDay));
+            }
+
+            builder.endArray();
+        }
+
+        builder.endObject();
+
+        return builder;
+    }
+
+    public static DailyTrigger create(JsonNode jsonNode) throws ParseException {
+        List<TimeOfDay> at;
+
+        JsonNode atNode = jsonNode.get("at");
+
+        if (atNode.isArray()) {
+            at = new ArrayList<>(atNode.size());
+
+            for (JsonNode atNodeElement : atNode) {
+                at.add(parseTimeOfDay(atNodeElement.textValue()));
+            }
+        } else if (atNode.isTextual()) {
+            at = Collections.singletonList(parseTimeOfDay(atNode.textValue()));
+        } else {
+            at = Collections.emptyList();
+        }
+
+        return new DailyTrigger(at);
+    }
+
+    private static CronExpression createCronExpression(TimeOfDay timeOfDay) {
+        try {
+            StringBuilder result = new StringBuilder();
+
+            result.append(timeOfDay.getSecond()).append(' ');
+            result.append(timeOfDay.getMinute()).append(' ');
+            result.append(timeOfDay.getHour()).append(' ');
+            result.append("? * *");
+
+            return new CronExpression(result.toString());
+        } catch (ParseException e) {
+            throw new RuntimeException(e);
+        }
+    }
+
+}
