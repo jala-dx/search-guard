@@ -18,10 +18,13 @@ import org.quartz.JobKey;
 import org.quartz.SimpleScheduleBuilder;
 import org.quartz.Trigger;
 import org.quartz.TriggerBuilder;
+import org.quartz.TriggerKey;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.node.ArrayNode;
+import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.fasterxml.jackson.databind.node.TextNode;
+import com.floragunn.searchsupport.jobs.config.schedule.WeeklyTrigger;
 import com.floragunn.searchsupport.util.DurationFormat;
 import com.floragunn.searchsupport.util.JacksonTools;
 import com.jayway.jsonpath.Configuration;
@@ -39,6 +42,9 @@ public abstract class AbstractJobConfigFactory<JobConfigType extends JobConfig> 
     protected String descriptionPath = "$.description";
     protected String durablePath = "$.durable";
     protected String cronScheduleTriggerPath = "$.trigger.schedule.cron";
+    protected String dailyScheduleTriggerPath = "$.trigger.schedule.daily";
+    protected String weeklyScheduleTriggerPath = "$.trigger.schedule.weekly";
+    protected String monthlyScheduleTriggerPath = "$.trigger.schedule.monthly";
     protected String intervalScheduleTriggerPath = "$.trigger.schedule.interval";
     protected String authTokenPath = "$._meta.auth_token";
     protected String jobDataPath = "$";
@@ -105,9 +111,9 @@ public abstract class AbstractJobConfigFactory<JobConfigType extends JobConfig> 
     }
 
     protected List<Trigger> getTriggers(JobKey jobKey, ReadContext ctx) throws ParseException {
+        ArrayList<Trigger> triggers = new ArrayList<>();
 
         Object cronScheduleTriggers = ctx.read(cronScheduleTriggerPath);
-        ArrayList<Trigger> triggers = new ArrayList<>();
 
         if (cronScheduleTriggers != null) {
             triggers.addAll(getCronScheduleTriggers(jobKey, cronScheduleTriggers));
@@ -119,6 +125,12 @@ public abstract class AbstractJobConfigFactory<JobConfigType extends JobConfig> 
             triggers.addAll(getIntervalScheduleTriggers(jobKey, intervalScheduleTriggers));
         }
 
+        Object weeklyTriggers = ctx.read(weeklyScheduleTriggerPath);
+        
+        if (weeklyTriggers != null) {
+            triggers.addAll(getWeeklyTriggers(jobKey, weeklyTriggers));
+        }
+        
         return triggers;
     }
 
@@ -129,7 +141,7 @@ public abstract class AbstractJobConfigFactory<JobConfigType extends JobConfig> 
             return null;
         }
     }
-    
+
     protected Class<? extends Job> getJobClass(ReadContext ctx) {
         return jobClass;
     }
@@ -170,6 +182,20 @@ public abstract class AbstractJobConfigFactory<JobConfigType extends JobConfig> 
         return result;
     }
 
+    protected List<Trigger> getWeeklyTriggers(JobKey jobKey, Object scheduleTriggers) throws ParseException {
+        List<Trigger> result = new ArrayList<>();
+
+        if (scheduleTriggers instanceof ObjectNode) {
+            result.add(createWeeklyTrigger(jobKey, (ObjectNode) scheduleTriggers));
+        } else if (scheduleTriggers instanceof ArrayNode) {
+            for (JsonNode trigger : (ArrayNode) scheduleTriggers) {
+                result.add(createWeeklyTrigger(jobKey, trigger));
+            }
+        }
+
+        return result;
+    }
+
     protected String getTriggerKey(String trigger) {
         return DigestUtils.md5Hex(trigger);
     }
@@ -187,6 +213,16 @@ public abstract class AbstractJobConfigFactory<JobConfigType extends JobConfig> 
 
         return TriggerBuilder.newTrigger().withIdentity(jobKey.getName() + "___" + triggerKey, group).forJob(jobKey)
                 .withSchedule(SimpleScheduleBuilder.simpleSchedule().repeatForever().withIntervalInMilliseconds(duration.toMillis())).build();
+    }
+
+    protected Trigger createWeeklyTrigger(JobKey jobKey, JsonNode jsonNode) throws ParseException {
+        String triggerKey = getTriggerKey(jsonNode.toString());
+
+        WeeklyTrigger trigger = WeeklyTrigger.create(jsonNode);
+        trigger.setJobKey(jobKey);
+        trigger.setKey(new TriggerKey(jobKey.getName() + "___" + triggerKey, group));
+
+        return trigger;
     }
 
     public String getGroup() {
