@@ -238,8 +238,9 @@ public abstract class HumanReadableCronTrigger<T extends Trigger> extends Abstra
     }
 
     protected static String format(TimeOfDay timeOfDay) {
-        StringBuilder result = new StringBuilder(timeOfDay.getHour());
+        StringBuilder result = new StringBuilder();
 
+        result.append(timeOfDay.getHour());
         result.append(':');
 
         if (timeOfDay.getMinute() < 10) {
