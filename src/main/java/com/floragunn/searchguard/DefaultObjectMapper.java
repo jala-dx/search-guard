@@ -18,7 +18,6 @@ import java.io.IOException;
 import java.security.AccessController;
 import java.security.PrivilegedActionException;
 import java.security.PrivilegedExceptionAction;
-import java.util.Map;
 
 import org.elasticsearch.SpecialPermission;
 
@@ -169,6 +168,10 @@ public class DefaultObjectMapper {
     }
 
     public static <T> T convertValue(Object value, JavaType jt) throws IOException {
+        return convertValue(value, jt, false);
+    }
+    
+    public static <T> T convertValue(Object value, JavaType jt, boolean omitDefaults) throws IOException {
 
         final SecurityManager sm = System.getSecurityManager();
 
@@ -180,7 +183,27 @@ public class DefaultObjectMapper {
             return AccessController.doPrivileged(new PrivilegedExceptionAction<T>() {
                 @Override
                 public T run() throws Exception {
-                    return objectMapper.convertValue(value, jt);
+                    return (omitDefaults?defaulOmittingObjectMapper:objectMapper).convertValue(value, jt);
+                }
+            });
+        } catch (final PrivilegedActionException e) {
+            throw (IOException) e.getCause();
+        }
+    }
+    
+    public static <T> T convertValue(Object value, Class<T> clazz, boolean omitDefaults) throws IOException {
+
+        final SecurityManager sm = System.getSecurityManager();
+
+        if (sm != null) {
+            sm.checkPermission(new SpecialPermission());
+        }
+
+        try {
+            return AccessController.doPrivileged(new PrivilegedExceptionAction<T>() {
+                @Override
+                public T run() throws Exception {
+                    return (omitDefaults?defaulOmittingObjectMapper:objectMapper).convertValue(value, clazz);
                 }
             });
         } catch (final PrivilegedActionException e) {
