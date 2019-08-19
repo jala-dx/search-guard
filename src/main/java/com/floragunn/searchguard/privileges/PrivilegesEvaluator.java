@@ -525,7 +525,7 @@ public class PrivilegesEvaluator implements DCFListener {
     }
 
     private static boolean isTenantPerm(String action0) {
-        return action0.startsWith("searchguard:tenant:");
+        return action0.startsWith("cluster:admin:searchguard:tenant:");
     }
 
     private boolean checkFilteredAliases(Set<String> requestedResolvedIndices, String action) {
