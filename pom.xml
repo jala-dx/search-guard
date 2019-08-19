@@ -34,7 +34,7 @@
   </licenses>
 
   <properties>
-    <enterprise-modules.version>7.0.1-36.1.0</enterprise-modules.version>
+    <enterprise-modules.version>7.0.1-36.2.0-SNAPSHOT</enterprise-modules.version>
     <elasticsearch.version>7.0.1</elasticsearch.version>
     
     <!-- deps -->
