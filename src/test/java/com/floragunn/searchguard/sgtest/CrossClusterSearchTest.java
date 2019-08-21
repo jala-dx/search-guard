@@ -15,6 +15,7 @@ import org.elasticsearch.common.xcontent.XContentType;
 import org.elasticsearch.transport.Netty4Plugin;
 import org.junit.After;
 import org.junit.Assert;
+import org.junit.Ignore;
 import org.junit.Test;
 
 import com.floragunn.searchguard.SearchGuardPlugin;
@@ -31,6 +32,7 @@ import com.floragunn.searchguard.test.helper.file.FileHelper;
 import com.floragunn.searchguard.test.helper.rest.RestHelper;
 import com.floragunn.searchguard.test.helper.rest.RestHelper.HttpResponse;
 
+@Ignore
 public class CrossClusterSearchTest extends AbstractSGUnitTest{
     
     ClusterHelper cl1 = new ClusterHelper("crl1");
