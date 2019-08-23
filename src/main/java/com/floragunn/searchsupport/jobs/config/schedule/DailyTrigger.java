@@ -5,6 +5,7 @@ import java.text.ParseException;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
+import java.util.TimeZone;
 
 import org.elasticsearch.common.xcontent.XContentBuilder;
 import org.quartz.CronExpression;
@@ -21,9 +22,10 @@ public class DailyTrigger extends HumanReadableCronTrigger<DailyTrigger> {
 
     private List<TimeOfDay> at;
 
-    public DailyTrigger(List<TimeOfDay> at) {
+    public DailyTrigger(List<TimeOfDay> at, TimeZone timeZone) {
         this.at = Collections.unmodifiableList(at);
-
+        this.timeZone = timeZone;
+        
         init();
     }
 
@@ -75,7 +77,7 @@ public class DailyTrigger extends HumanReadableCronTrigger<DailyTrigger> {
         return builder;
     }
 
-    public static DailyTrigger create(JsonNode jsonNode) throws ParseException {
+    public static DailyTrigger create(JsonNode jsonNode, TimeZone timeZone) throws ParseException {
         List<TimeOfDay> at;
 
         JsonNode atNode = jsonNode.get("at");
@@ -92,7 +94,7 @@ public class DailyTrigger extends HumanReadableCronTrigger<DailyTrigger> {
             at = Collections.emptyList();
         }
 
-        return new DailyTrigger(at);
+        return new DailyTrigger(at, timeZone);
     }
 
     private static CronExpression createCronExpression(TimeOfDay timeOfDay) {

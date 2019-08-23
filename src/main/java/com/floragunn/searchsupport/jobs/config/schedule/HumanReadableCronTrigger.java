@@ -3,6 +3,7 @@ package com.floragunn.searchsupport.jobs.config.schedule;
 import java.text.ParseException;
 import java.util.Date;
 import java.util.List;
+import java.util.TimeZone;
 
 import org.elasticsearch.common.xcontent.ToXContentObject;
 import org.quartz.Calendar;
@@ -20,11 +21,18 @@ public abstract class HumanReadableCronTrigger<T extends Trigger> extends Abstra
     private Date startTime = null;
     private Date endTime = null;
     private Date previousFireTime = null;
+    protected TimeZone timeZone;
 
     protected abstract List<CronTriggerImpl> buildCronTriggers();
 
     protected void init() {
         this.generatedCronTriggers = buildCronTriggers();
+
+        if (timeZone != null) {
+            for (CronTriggerImpl trigger : this.generatedCronTriggers) {
+                trigger.setTimeZone(timeZone);
+            }
+        }
     }
 
     @Override
@@ -293,6 +301,10 @@ public abstract class HumanReadableCronTrigger<T extends Trigger> extends Abstra
         NumberFormatException e) {
             throw new ParseException("Illegal time format: " + string, -1);
         }
+    }
+
+    public TimeZone getTimeZone() {
+        return timeZone;
     }
 
 }
