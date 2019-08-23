@@ -6,6 +6,7 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
 import java.util.Map;
+import java.util.TimeZone;
 
 import org.apache.commons.codec.digest.DigestUtils;
 import org.elasticsearch.common.bytes.BytesReference;
@@ -48,6 +49,7 @@ public abstract class AbstractJobConfigFactory<JobConfigType extends JobConfig> 
     protected String weeklyScheduleTriggerPath = "$.trigger.schedule.weekly";
     protected String monthlyScheduleTriggerPath = "$.trigger.schedule.monthly";
     protected String intervalScheduleTriggerPath = "$.trigger.schedule.interval";
+    protected String timezonePath = "$.trigger.schedule.timezone";
     protected String authTokenPath = "$._meta.auth_token";
     protected String jobDataPath = "$";
 
@@ -115,10 +117,17 @@ public abstract class AbstractJobConfigFactory<JobConfigType extends JobConfig> 
     protected List<Trigger> getTriggers(JobKey jobKey, ReadContext ctx) throws ParseException {
         ArrayList<Trigger> triggers = new ArrayList<>();
 
+        String timeZoneId = ctx.read(timezonePath, String.class);
+        TimeZone timeZone = null;
+
+        if (timeZoneId != null) {
+            timeZone = TimeZone.getTimeZone(timeZoneId);
+        }
+
         Object cronScheduleTriggers = ctx.read(cronScheduleTriggerPath);
 
         if (cronScheduleTriggers != null) {
-            triggers.addAll(getCronScheduleTriggers(jobKey, cronScheduleTriggers));
+            triggers.addAll(getCronScheduleTriggers(jobKey, cronScheduleTriggers, timeZone));
         }
 
         Object intervalScheduleTriggers = ctx.read(intervalScheduleTriggerPath);
@@ -130,19 +139,19 @@ public abstract class AbstractJobConfigFactory<JobConfigType extends JobConfig> 
         Object weeklyTriggers = ctx.read(weeklyScheduleTriggerPath);
 
         if (weeklyTriggers != null) {
-            triggers.addAll(getWeeklyTriggers(jobKey, weeklyTriggers));
+            triggers.addAll(getWeeklyTriggers(jobKey, weeklyTriggers, timeZone));
         }
 
         Object dailyTriggers = ctx.read(dailyScheduleTriggerPath);
 
         if (dailyTriggers != null) {
-            triggers.addAll(getDailyTriggers(jobKey, dailyTriggers));
+            triggers.addAll(getDailyTriggers(jobKey, dailyTriggers, timeZone));
         }
 
         Object monthlyTriggers = ctx.read(monthlyScheduleTriggerPath);
 
         if (monthlyTriggers != null) {
-            triggers.addAll(getMonthlyTriggers(jobKey, monthlyTriggers));
+            triggers.addAll(getMonthlyTriggers(jobKey, monthlyTriggers, timeZone));
         }
 
         return triggers;
@@ -160,17 +169,17 @@ public abstract class AbstractJobConfigFactory<JobConfigType extends JobConfig> 
         return jobClass;
     }
 
-    protected List<Trigger> getCronScheduleTriggers(JobKey jobKey, Object scheduleTriggers) throws ParseException {
+    protected List<Trigger> getCronScheduleTriggers(JobKey jobKey, Object scheduleTriggers, TimeZone timeZone) throws ParseException {
         List<Trigger> result = new ArrayList<>();
 
         if (scheduleTriggers instanceof TextNode) {
-            result.add(createCronTrigger(jobKey, ((TextNode) scheduleTriggers).textValue()));
+            result.add(createCronTrigger(jobKey, ((TextNode) scheduleTriggers).textValue(), timeZone));
         } else if (scheduleTriggers instanceof ArrayNode) {
             for (JsonNode trigger : (ArrayNode) scheduleTriggers) {
                 String triggerDef = trigger.textValue();
 
                 if (triggerDef != null) {
-                    result.add(createCronTrigger(jobKey, triggerDef));
+                    result.add(createCronTrigger(jobKey, triggerDef, timeZone));
                 }
             }
         }
@@ -196,42 +205,42 @@ public abstract class AbstractJobConfigFactory<JobConfigType extends JobConfig> 
         return result;
     }
 
-    protected List<Trigger> getWeeklyTriggers(JobKey jobKey, Object scheduleTriggers) throws ParseException {
+    protected List<Trigger> getWeeklyTriggers(JobKey jobKey, Object scheduleTriggers, TimeZone timeZone) throws ParseException {
         List<Trigger> result = new ArrayList<>();
 
         if (scheduleTriggers instanceof ObjectNode) {
-            result.add(createWeeklyTrigger(jobKey, (ObjectNode) scheduleTriggers));
+            result.add(createWeeklyTrigger(jobKey, (ObjectNode) scheduleTriggers, timeZone));
         } else if (scheduleTriggers instanceof ArrayNode) {
             for (JsonNode trigger : (ArrayNode) scheduleTriggers) {
-                result.add(createWeeklyTrigger(jobKey, trigger));
+                result.add(createWeeklyTrigger(jobKey, trigger, timeZone));
             }
         }
 
         return result;
     }
 
-    protected List<Trigger> getMonthlyTriggers(JobKey jobKey, Object scheduleTriggers) throws ParseException {
+    protected List<Trigger> getMonthlyTriggers(JobKey jobKey, Object scheduleTriggers, TimeZone timeZone) throws ParseException {
         List<Trigger> result = new ArrayList<>();
 
         if (scheduleTriggers instanceof ObjectNode) {
-            result.add(createMonthlyTrigger(jobKey, (ObjectNode) scheduleTriggers));
+            result.add(createMonthlyTrigger(jobKey, (ObjectNode) scheduleTriggers, timeZone));
         } else if (scheduleTriggers instanceof ArrayNode) {
             for (JsonNode trigger : (ArrayNode) scheduleTriggers) {
-                result.add(createMonthlyTrigger(jobKey, trigger));
+                result.add(createMonthlyTrigger(jobKey, trigger, timeZone));
             }
         }
 
         return result;
     }
 
-    protected List<Trigger> getDailyTriggers(JobKey jobKey, Object scheduleTriggers) throws ParseException {
+    protected List<Trigger> getDailyTriggers(JobKey jobKey, Object scheduleTriggers, TimeZone timeZone) throws ParseException {
         List<Trigger> result = new ArrayList<>();
 
         if (scheduleTriggers instanceof ObjectNode) {
-            result.add(createDailyTrigger(jobKey, (ObjectNode) scheduleTriggers));
+            result.add(createDailyTrigger(jobKey, (ObjectNode) scheduleTriggers, timeZone));
         } else if (scheduleTriggers instanceof ArrayNode) {
             for (JsonNode trigger : (ArrayNode) scheduleTriggers) {
-                result.add(createDailyTrigger(jobKey, trigger));
+                result.add(createDailyTrigger(jobKey, trigger, timeZone));
             }
         }
 
@@ -242,11 +251,11 @@ public abstract class AbstractJobConfigFactory<JobConfigType extends JobConfig> 
         return DigestUtils.md5Hex(trigger);
     }
 
-    protected Trigger createCronTrigger(JobKey jobKey, String cronExpression) throws ParseException {
+    protected Trigger createCronTrigger(JobKey jobKey, String cronExpression, TimeZone timeZone) throws ParseException {
         String triggerKey = getTriggerKey(cronExpression);
 
         return TriggerBuilder.newTrigger().withIdentity(jobKey.getName() + "___" + triggerKey, group).forJob(jobKey)
-                .withSchedule(CronScheduleBuilder.cronSchedule(cronExpression)).build();
+                .withSchedule(CronScheduleBuilder.cronSchedule(cronExpression).inTimeZone(timeZone)).build();
     }
 
     protected Trigger createIntervalScheduleTrigger(JobKey jobKey, String interval) throws ParseException {
@@ -257,30 +266,30 @@ public abstract class AbstractJobConfigFactory<JobConfigType extends JobConfig> 
                 .withSchedule(SimpleScheduleBuilder.simpleSchedule().repeatForever().withIntervalInMilliseconds(duration.toMillis())).build();
     }
 
-    protected Trigger createWeeklyTrigger(JobKey jobKey, JsonNode jsonNode) throws ParseException {
+    protected Trigger createWeeklyTrigger(JobKey jobKey, JsonNode jsonNode, TimeZone timeZone) throws ParseException {
         String triggerKey = getTriggerKey(jsonNode.toString());
 
-        WeeklyTrigger trigger = WeeklyTrigger.create(jsonNode);
+        WeeklyTrigger trigger = WeeklyTrigger.create(jsonNode, timeZone);
         trigger.setJobKey(jobKey);
         trigger.setKey(new TriggerKey(jobKey.getName() + "___" + triggerKey, group));
 
         return trigger;
     }
 
-    protected Trigger createMonthlyTrigger(JobKey jobKey, JsonNode jsonNode) throws ParseException {
+    protected Trigger createMonthlyTrigger(JobKey jobKey, JsonNode jsonNode, TimeZone timeZone) throws ParseException {
         String triggerKey = getTriggerKey(jsonNode.toString());
 
-        MonthlyTrigger trigger = MonthlyTrigger.create(jsonNode);
+        MonthlyTrigger trigger = MonthlyTrigger.create(jsonNode, timeZone);
         trigger.setJobKey(jobKey);
         trigger.setKey(new TriggerKey(jobKey.getName() + "___" + triggerKey, group));
 
         return trigger;
     }
 
-    protected Trigger createDailyTrigger(JobKey jobKey, JsonNode jsonNode) throws ParseException {
+    protected Trigger createDailyTrigger(JobKey jobKey, JsonNode jsonNode, TimeZone timeZone) throws ParseException {
         String triggerKey = getTriggerKey(jsonNode.toString());
 
-        DailyTrigger trigger = DailyTrigger.create(jsonNode);
+        DailyTrigger trigger = DailyTrigger.create(jsonNode, timeZone);
         trigger.setJobKey(jobKey);
         trigger.setKey(new TriggerKey(jobKey.getName() + "___" + triggerKey, group));
 

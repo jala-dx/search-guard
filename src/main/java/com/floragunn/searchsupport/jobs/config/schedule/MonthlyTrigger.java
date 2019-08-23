@@ -5,6 +5,7 @@ import java.text.ParseException;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
+import java.util.TimeZone;
 
 import org.elasticsearch.common.xcontent.XContentBuilder;
 import org.quartz.CronExpression;
@@ -21,9 +22,10 @@ public class MonthlyTrigger extends HumanReadableCronTrigger<MonthlyTrigger> {
     private List<Integer> on;
     private List<TimeOfDay> at;
 
-    public MonthlyTrigger(List<Integer> on, List<TimeOfDay> at) {
+    public MonthlyTrigger(List<Integer> on, List<TimeOfDay> at, TimeZone timeZone) {
         this.on = Collections.unmodifiableList(on);
         this.at = Collections.unmodifiableList(at);
+        this.timeZone = timeZone;
 
         init();
     }
@@ -90,7 +92,7 @@ public class MonthlyTrigger extends HumanReadableCronTrigger<MonthlyTrigger> {
         return builder;
     }
 
-    public static MonthlyTrigger create(JsonNode jsonNode) throws ParseException {
+    public static MonthlyTrigger create(JsonNode jsonNode, TimeZone timeZone) throws ParseException {
         List<Integer> on;
         List<TimeOfDay> at;
 
@@ -122,7 +124,7 @@ public class MonthlyTrigger extends HumanReadableCronTrigger<MonthlyTrigger> {
             at = Collections.emptyList();
         }
 
-        return new MonthlyTrigger(on, at);
+        return new MonthlyTrigger(on, at, timeZone);
     }
 
     private static CronExpression createCronExpression(TimeOfDay timeOfDay, List<Integer> on) {

@@ -6,6 +6,7 @@ import java.time.DayOfWeek;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
+import java.util.TimeZone;
 
 import org.elasticsearch.common.xcontent.XContentBuilder;
 import org.quartz.CronExpression;
@@ -24,9 +25,10 @@ public class WeeklyTrigger extends HumanReadableCronTrigger<WeeklyTrigger> {
     private List<DayOfWeek> on;
     private List<TimeOfDay> at;
 
-    public WeeklyTrigger(List<DayOfWeek> on, List<TimeOfDay> at) {
+    public WeeklyTrigger(List<DayOfWeek> on, List<TimeOfDay> at, TimeZone timeZone) {
         this.on = Collections.unmodifiableList(on);
         this.at = Collections.unmodifiableList(at);
+        this.timeZone = timeZone;
 
         init();
     }
@@ -99,7 +101,7 @@ public class WeeklyTrigger extends HumanReadableCronTrigger<WeeklyTrigger> {
         return builder;
     }
 
-    public static WeeklyTrigger create(JsonNode jsonNode) throws ParseException {
+    public static WeeklyTrigger create(JsonNode jsonNode, TimeZone timeZone) throws ParseException {
         List<DayOfWeek> on;
         List<TimeOfDay> at;
 
@@ -131,7 +133,7 @@ public class WeeklyTrigger extends HumanReadableCronTrigger<WeeklyTrigger> {
             at = Collections.emptyList();
         }
 
-        return new WeeklyTrigger(on, at);
+        return new WeeklyTrigger(on, at, timeZone);
     }
 
     private static int toQuartz(DayOfWeek dayOfWeek) {
