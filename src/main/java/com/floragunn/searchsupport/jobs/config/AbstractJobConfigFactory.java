@@ -255,7 +255,7 @@ public abstract class AbstractJobConfigFactory<JobConfigType extends JobConfig> 
         String triggerKey = getTriggerKey(cronExpression);
 
         return TriggerBuilder.newTrigger().withIdentity(jobKey.getName() + "___" + triggerKey, group).forJob(jobKey)
-                .withSchedule(CronScheduleBuilder.cronSchedule(cronExpression).inTimeZone(timeZone)).build();
+                .withSchedule(CronScheduleBuilder.cronScheduleNonvalidatedExpression(cronExpression).inTimeZone(timeZone)).build();
     }
 
     protected Trigger createIntervalScheduleTrigger(JobKey jobKey, String interval) throws ParseException {
