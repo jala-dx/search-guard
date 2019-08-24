@@ -437,7 +437,7 @@ public final class SearchGuardPlugin extends SearchGuardSSLPlugin implements Clu
             IndexScopedSettings indexScopedSettings, SettingsFilter settingsFilter, IndexNameExpressionResolver indexNameExpressionResolver,
             Supplier<DiscoveryNodes> nodesInCluster) {
 
-        final List<RestHandler> handlers = new ArrayList<RestHandler>(1);
+        final List<RestHandler> handlers = new ArrayList<RestHandler>();
 
         if (!client && !disabled) {
 
@@ -456,7 +456,7 @@ public final class SearchGuardPlugin extends SearchGuardSSLPlugin implements Clu
 
                 handlers.addAll(ReflectionHelper.instantiateMngtRestApiHandler(settings, configPath, restController, localClient, adminDns, cr, cs,
                         Objects.requireNonNull(principalExtractor), evaluator, threadPool, Objects.requireNonNull(auditLog)));
-                handlers.addAll(ReflectionHelper.instantiateRestApiHandler("com.floragunn.signals.api.LastAlertApiActions", settings, configPath,
+                handlers.addAll(ReflectionHelper.instantiateRestApiHandler("com.floragunn.signals.api.SignalsApiActions", settings, configPath,
                         restController, localClient, adminDns, cr, cs, scriptService, xContentRegistry, principalExtractor, evaluator, threadPool,
                         auditLog));
             }

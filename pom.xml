@@ -574,7 +574,7 @@
       <dependencies>
         <dependency>
           <groupId>com.floragunn</groupId>
-          <artifactId>lastalert</artifactId>
+          <artifactId>signals</artifactId>
           <version>7.x-HEAD-SNAPSHOT</version>
           <exclusions>
             <exclusion>
