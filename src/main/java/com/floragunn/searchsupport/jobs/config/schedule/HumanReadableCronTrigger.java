@@ -41,8 +41,18 @@ public abstract class HumanReadableCronTrigger<T extends Trigger> extends Abstra
 
         if (trigger != null) {
             trigger.setNextFireTime(nextFireTime);
-        } else if (generatedCronTriggers.size() > 0) {
-            throw new RuntimeException("Could not update nextFireTime: " + generatedCronTriggers);
+        } else {
+
+            // We're being recovered, so compute the fire times
+            // XXX We don't have a calendar object here
+
+            Date justBeforeNextFireTime = new Date(nextFireTime.getTime() - 1);
+
+            for (CronTriggerImpl delegate : generatedCronTriggers) {
+                Date fireTime = delegate.getFireTimeAfter(justBeforeNextFireTime);
+
+                delegate.setNextFireTime(fireTime);
+            }
         }
     }
 
