@@ -6,6 +6,7 @@ import java.util.Iterator;
 
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
+import org.elasticsearch.ResourceAlreadyExistsException;
 import org.elasticsearch.action.admin.indices.create.CreateIndexRequest;
 import org.elasticsearch.action.search.SearchRequest;
 import org.elasticsearch.action.search.SearchResponse;
@@ -23,12 +24,14 @@ public class IndexJobConfigSource<JobType extends JobConfig> implements Iterable
     private final static Logger log = LogManager.getLogger(IndexJobConfigSource.class);
 
     private final String indexName;
+    private final String scope;
     private final Client client;
     private final JobConfigFactory<JobType> jobFactory;
     private final JobDistributor jobDistributor;
 
-    public IndexJobConfigSource(String indexName, Client client, JobConfigFactory<JobType> jobFactory, JobDistributor jobDistributor) {
+    public IndexJobConfigSource(String indexName, String scope, Client client, JobConfigFactory<JobType> jobFactory, JobDistributor jobDistributor) {
         this.indexName = indexName;
+        this.scope = scope;
         this.client = client;
         this.jobFactory = jobFactory;
         this.jobDistributor = jobDistributor;
@@ -51,7 +54,7 @@ public class IndexJobConfigSource<JobType extends JobConfig> implements Iterable
         private SearchResponse searchResponse;
         private SearchHits searchHits;
         private JobType current;
-        private boolean done = false;
+        private volatile boolean done = false;
 
         @Override
         public boolean hasNext() {
@@ -94,11 +97,11 @@ public class IndexJobConfigSource<JobType extends JobConfig> implements Iterable
                     // TODO really good here? Maybe let REST actions create index and skip this silently?
                     
                     try {
-                    if (log.isDebugEnabled()) {
-                        log.debug("Index " + indexName + " does not exist yet. Creating new index.");
-                    }
-                    
-                    client.admin().indices().create(new CreateIndexRequest(indexName)).actionGet();
+                        if (log.isDebugEnabled()) {
+                            log.debug("Index " + indexName + " does not exist yet. Creating new index.");
+                        }
+                        
+                        client.admin().indices().create(new CreateIndexRequest(indexName)).actionGet();
 
                         
                     } catch (ResourceAlreadyExistsException e1) {

@@ -190,7 +190,7 @@ public class SchedulerBuilder<JobType extends JobConfig> {
         }
 
         if (this.jobConfigSource == null) {
-            this.jobConfigSource = new IndexJobConfigSource<>(configIndex, client, jobConfigFactory, jobDistributor);
+            this.jobConfigSource = new IndexJobConfigSource<>(configIndex, name, client, jobConfigFactory, jobDistributor);
         }
 
         if (this.nodeEnvironment != null) {
