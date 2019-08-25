@@ -89,7 +89,10 @@ public class IndexJobConfigSource<JobType extends JobConfig> implements Iterable
                         log.debug("Executing " + this.searchRequest);
                     }
                     
+                    //is this a admin elevated call? or under which perms this is running?
+                    //do we need to filter here against tenant?
                     this.searchResponse = client.search(searchRequest).actionGet();
+                    
                     this.searchHits = this.searchResponse.getHits();
                     this.searchHitIterator = this.searchHits.iterator();
                 } catch (IndexNotFoundException e) {
