@@ -93,12 +93,20 @@ public class IndexJobConfigSource<JobType extends JobConfig> implements Iterable
                     // TODO settings for index?
                     // TODO really good here? Maybe let REST actions create index and skip this silently?
                     
+                    try {
                     if (log.isDebugEnabled()) {
                         log.debug("Index " + indexName + " does not exist yet. Creating new index.");
                     }
                     
                     client.admin().indices().create(new CreateIndexRequest(indexName)).actionGet();
 
+                        
+                    } catch (ResourceAlreadyExistsException e1) {
+                        if (log.isDebugEnabled()) {
+                            log.debug("Index "+indexName+" already created. This is harmless and can be ignored: "+e);
+                        }
+                    }
+                    
                     this.done = true;
                     return;
                 }
