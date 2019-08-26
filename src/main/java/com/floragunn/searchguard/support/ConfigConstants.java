@@ -226,4 +226,6 @@ public class ConfigConstants {
     public static final String SEARCHGUARD_UNSUPPORTED_RESTAPI_ALLOW_SGCONFIG_MODIFICATION = "searchguard.unsupported.restapi.allow_sgconfig_modification";
 
     public static final String SEARCHGUARD_UNSUPPORTED_LOAD_STATIC_RESOURCES = "searchguard.unsupported.load_static_resources";
+
+    public static final String SG_CONF_REQUEST_ENFORCE_DFM_HEADER = SG_CONFIG_PREFIX+"conf_request_enforce_dfm";
 }

@@ -116,6 +116,7 @@ public class SearchGuardInterceptor {
                         
             final Map<String, String> headerMap = new HashMap<>(Maps.filterKeys(origHeaders0, k->k!=null && (
                     k.equals(ConfigConstants.SG_CONF_REQUEST_HEADER)
+                    || k.equals(ConfigConstants.SG_CONF_REQUEST_ENFORCE_DFM_HEADER)
                     || k.equals(ConfigConstants.SG_ORIGIN_HEADER)
                     || k.equals(ConfigConstants.SG_REMOTE_ADDRESS_HEADER)
                     || k.equals(ConfigConstants.SG_USER_HEADER)

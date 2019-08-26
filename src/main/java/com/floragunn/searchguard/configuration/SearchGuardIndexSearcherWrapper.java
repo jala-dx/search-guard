@@ -57,12 +57,12 @@ public class SearchGuardIndexSearcherWrapper extends IndexSearcherWrapper {
         }
 
 
-        return dlsFlsWrap(reader, isAdminAuthenticatedOrInternalRequest());
+        return dlsFlsWrap(reader, isAdminAuthenticatedOrInternalRequest() && !enforceDfm()); //separate in two parameters
     }
 
     @Override
     public final IndexSearcher wrap(final IndexSearcher searcher) throws EngineException {
-        return dlsFlsWrap(searcher, isAdminAuthenticatedOrInternalRequest());
+        return dlsFlsWrap(searcher, isAdminAuthenticatedOrInternalRequest() && !enforceDfm()); //separate in two parameters
     }
 
     protected IndexSearcher dlsFlsWrap(final IndexSearcher searcher, boolean isAdmin) throws EngineException {
@@ -90,5 +90,13 @@ public class SearchGuardIndexSearcherWrapper extends IndexSearcherWrapper {
 
     protected final boolean isSearchGuardIndexRequest() {
         return SearchGuardPlugin.getProtectedIndices().isProtected(index.getName());
+    }
+    
+    private boolean enforceDfm() {
+        if ("true".equals(HeaderHelper.getSafeFromHeader(threadContext, ConfigConstants.SG_CONF_REQUEST_ENFORCE_DFM_HEADER))) {
+            return true;
+        } else {
+            return false;
+        }
     }
 }
