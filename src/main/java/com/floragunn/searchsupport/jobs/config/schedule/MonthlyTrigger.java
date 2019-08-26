@@ -15,6 +15,9 @@ import org.quartz.TimeOfDay;
 import org.quartz.impl.triggers.CronTriggerImpl;
 
 import com.fasterxml.jackson.databind.JsonNode;
+import com.floragunn.searchsupport.jobs.config.validation.ConfigValidationException;
+import com.floragunn.searchsupport.jobs.config.validation.InvalidAttributeValue;
+import com.floragunn.searchsupport.jobs.config.validation.ValidationErrors;
 
 public class MonthlyTrigger extends HumanReadableCronTrigger<MonthlyTrigger> {
 
@@ -92,9 +95,11 @@ public class MonthlyTrigger extends HumanReadableCronTrigger<MonthlyTrigger> {
         return builder;
     }
 
-    public static MonthlyTrigger create(JsonNode jsonNode, TimeZone timeZone) throws ParseException {
-        List<Integer> on;
-        List<TimeOfDay> at;
+    public static MonthlyTrigger create(JsonNode jsonNode, TimeZone timeZone) throws ConfigValidationException {
+        ValidationErrors validationErrors = new ValidationErrors();
+
+        List<Integer> on = null;
+        List<TimeOfDay> at = null;
 
         JsonNode onNode = jsonNode.get("on");
 
@@ -102,29 +107,49 @@ public class MonthlyTrigger extends HumanReadableCronTrigger<MonthlyTrigger> {
             on = new ArrayList<>(onNode.size());
 
             for (JsonNode onNodeElement : onNode) {
-                on.add(onNodeElement.asInt());
+                on.add(getMonth(onNodeElement, validationErrors));
             }
         } else if (onNode.isNumber()) {
-            on = Collections.singletonList(onNode.asInt());
+            on = Collections.singletonList(getMonth(onNode, validationErrors));
         } else {
             on = Collections.emptyList();
         }
 
-        JsonNode atNode = jsonNode.get("at");
+        try {
+            JsonNode atNode = jsonNode.get("at");
 
-        if (atNode.isArray()) {
-            at = new ArrayList<>(atNode.size());
+            if (atNode.isArray()) {
+                at = new ArrayList<>(atNode.size());
 
-            for (JsonNode atNodeElement : atNode) {
-                at.add(parseTimeOfDay(atNodeElement.textValue()));
+                for (JsonNode atNodeElement : atNode) {
+                    at.add(parseTimeOfDay(atNodeElement.textValue()));
+                }
+            } else if (atNode.isTextual()) {
+                at = Collections.singletonList(parseTimeOfDay(atNode.textValue()));
+            } else {
+                at = Collections.emptyList();
             }
-        } else if (atNode.isTextual()) {
-            at = Collections.singletonList(parseTimeOfDay(atNode.textValue()));
-        } else {
-            at = Collections.emptyList();
+        } catch (ConfigValidationException e) {
+            validationErrors.add("at", e);
         }
 
         return new MonthlyTrigger(on, at, timeZone);
+    }
+
+    private static int getMonth(JsonNode onNodeElement, ValidationErrors validationErrors) {
+        if (onNodeElement.isNumber()) {
+            int onValue = onNodeElement.asInt();
+
+            if (onValue < 1 || onValue > 12) {
+                validationErrors.add(new InvalidAttributeValue("on", onValue, "Month: 1-12", onNodeElement));
+            }
+
+            return onValue;
+        } else {
+            validationErrors.add(new InvalidAttributeValue("on", onNodeElement.toString(), "Month: 1-12", onNodeElement));
+
+            return -1;
+        }
     }
 
     private static CronExpression createCronExpression(TimeOfDay timeOfDay, List<Integer> on) {

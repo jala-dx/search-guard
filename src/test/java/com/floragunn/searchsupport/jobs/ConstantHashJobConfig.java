@@ -1,11 +1,10 @@
 package com.floragunn.searchsupport.jobs;
 
-import java.text.ParseException;
-
 import org.quartz.Job;
 
 import com.floragunn.searchsupport.jobs.config.DefaultJobConfig;
 import com.floragunn.searchsupport.jobs.config.DefaultJobConfigFactory;
+import com.floragunn.searchsupport.jobs.config.validation.ConfigValidationException;
 import com.jayway.jsonpath.ReadContext;
 
 public class ConstantHashJobConfig extends DefaultJobConfig {
@@ -32,7 +31,7 @@ public class ConstantHashJobConfig extends DefaultJobConfig {
         }
 
         @Override
-        protected DefaultJobConfig createFromReadContext(String id, ReadContext ctx, long version) throws ParseException {
+        protected DefaultJobConfig createFromReadContext(String id, ReadContext ctx, long version) throws ConfigValidationException {
             ConstantHashJobConfig result = (ConstantHashJobConfig) super.createFromReadContext(id, ctx, version);
 
             Integer hashCode = ctx.read("$.hash", Integer.class);

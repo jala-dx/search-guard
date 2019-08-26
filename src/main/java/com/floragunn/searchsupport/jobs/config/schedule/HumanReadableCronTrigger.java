@@ -1,6 +1,5 @@
 package com.floragunn.searchsupport.jobs.config.schedule;
 
-import java.text.ParseException;
 import java.util.Date;
 import java.util.List;
 import java.util.TimeZone;
@@ -12,6 +11,10 @@ import org.quartz.TimeOfDay;
 import org.quartz.Trigger;
 import org.quartz.impl.triggers.AbstractTrigger;
 import org.quartz.impl.triggers.CronTriggerImpl;
+
+import com.floragunn.searchsupport.jobs.config.validation.ConfigValidationException;
+import com.floragunn.searchsupport.jobs.config.validation.InvalidAttributeValue;
+import com.floragunn.searchsupport.jobs.config.validation.ValidationErrors;
 
 public abstract class HumanReadableCronTrigger<T extends Trigger> extends AbstractTrigger<T> implements Trigger, ToXContentObject {
 
@@ -280,13 +283,17 @@ public abstract class HumanReadableCronTrigger<T extends Trigger> extends Abstra
         return result.toString();
     }
 
-    protected static TimeOfDay parseTimeOfDay(String string) throws ParseException {
+    protected static TimeOfDay parseTimeOfDay(String string) throws ConfigValidationException {
         try {
 
             int colon = string.indexOf(':');
 
             if (colon == -1) {
                 int hour = Integer.parseInt(string);
+
+                if (hour < 0 || hour >= 24) {
+                    throw new ConfigValidationException(new InvalidAttributeValue("at", string, "Hour must be between 0 and 23", null));
+                }
 
                 return new TimeOfDay(hour, 0);
             } else {
@@ -303,13 +310,27 @@ public abstract class HumanReadableCronTrigger<T extends Trigger> extends Abstra
                     second = Integer.parseInt(string.substring(nextColon + 1));
                 }
 
+                ValidationErrors validationErrors = new ValidationErrors();
+
+                if (hour < 0 || hour >= 24) {
+                    throw new ConfigValidationException(new InvalidAttributeValue("at", string, "Hour must be between 0 and 23", null));
+                }
+
+                if (minute < 0 || minute >= 60) {
+                    throw new ConfigValidationException(new InvalidAttributeValue("at", string, "Minute must be between 0 and 59", null));
+                }
+
+                if (second < 0 || second >= 60) {
+                    throw new ConfigValidationException(new InvalidAttributeValue("at", string, "Second must be between 0 and 59", null));
+                }
+
+                validationErrors.throwExceptionForPresentErrors();
+
                 return new TimeOfDay(hour, minute, second);
             }
 
-        } catch (
-
-        NumberFormatException e) {
-            throw new ParseException("Illegal time format: " + string, -1);
+        } catch (NumberFormatException e) {
+            throw new ConfigValidationException(new InvalidAttributeValue("at", string, "Time of day: <HH>:<MM>:<SS>?", null).cause(e));
         }
     }
 

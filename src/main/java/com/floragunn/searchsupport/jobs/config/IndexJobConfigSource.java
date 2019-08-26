@@ -1,7 +1,6 @@
 package com.floragunn.searchsupport.jobs.config;
 
 import java.io.IOException;
-import java.text.ParseException;
 import java.util.Iterator;
 
 import org.apache.logging.log4j.LogManager;
@@ -17,6 +16,7 @@ import org.elasticsearch.search.SearchHits;
 import org.elasticsearch.search.builder.SearchSourceBuilder;
 
 import com.floragunn.searchsupport.jobs.cluster.JobDistributor;
+import com.floragunn.searchsupport.jobs.config.validation.ConfigValidationException;
 import com.google.common.collect.Iterators;
 
 public class IndexJobConfigSource<JobType extends JobConfig> implements Iterable<JobType> {
@@ -79,24 +79,24 @@ public class IndexJobConfigSource<JobType extends JobConfig> implements Iterable
             if (this.searchRequest == null) {
                 try {
                     this.searchRequest = new SearchRequest(indexName);
-                    this.searchRequest
-                            .source(new SearchSourceBuilder().query(QueryBuilders.boolQuery().mustNot(QueryBuilders.termQuery("active", false))).size(10000));
-                    
+                    this.searchRequest.source(
+                            new SearchSourceBuilder().query(QueryBuilders.boolQuery().mustNot(QueryBuilders.termQuery("active", false))).size(10000));
+
                     if (log.isDebugEnabled()) {
                         log.debug("Executing " + this.searchRequest);
                     }
-                    
+
                     this.searchResponse = client.search(searchRequest).actionGet();
                     this.searchHits = this.searchResponse.getHits();
                     this.searchHitIterator = this.searchHits.iterator();
                 } catch (IndexNotFoundException e) {
                     // TODO settings for index?
                     // TODO really good here? Maybe let REST actions create index and skip this silently?
-                    
+
                     if (log.isDebugEnabled()) {
                         log.debug("Index " + indexName + " does not exist yet. Creating new index.");
                     }
-                    
+
                     client.admin().indices().create(new CreateIndexRequest(indexName)).actionGet();
 
                     this.done = true;
@@ -108,7 +108,7 @@ public class IndexJobConfigSource<JobType extends JobConfig> implements Iterable
                 SearchHit searchHit = this.searchHitIterator.next();
                 try {
                     this.current = jobFactory.createFromBytes(searchHit.getId(), searchHit.getSourceRef(), searchHit.getVersion());
-                } catch (ParseException | IOException e) {
+                } catch (ConfigValidationException | IOException e) {
                     log.error("Error while parsing job configuration " + indexName + "/" + searchHit.getId() + ":\n" + searchHit.getSourceAsString(),
                             e);
                 }
