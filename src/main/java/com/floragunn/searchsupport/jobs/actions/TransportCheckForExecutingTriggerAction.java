@@ -38,10 +38,6 @@ public class TransportCheckForExecutingTriggerAction extends
 
     }
 
-    protected NodeRequest newNodeRequest(final String nodeId, final CheckForExecutingTriggerRequest request) {
-        return new NodeRequest(nodeId, request);
-    }
-
     @Override
     protected NodeResponse newNodeResponse() {
         return new NodeResponse(clusterService.localNode(), new ArrayList<>());
@@ -100,8 +96,7 @@ public class TransportCheckForExecutingTriggerAction extends
         public NodeRequest() {
         }
 
-        public NodeRequest(final String nodeId, final CheckForExecutingTriggerRequest request) {
-            super(nodeId);
+        public NodeRequest(final CheckForExecutingTriggerRequest request) {
             this.request = request;
         }
 
@@ -179,6 +174,11 @@ public class TransportCheckForExecutingTriggerAction extends
             return "NodeResponse [executingTriggers=" + executingTriggers + ", message=" + message + "]";
         }
 
+    }
+
+    @Override
+    protected NodeRequest newNodeRequest(CheckForExecutingTriggerRequest request) {
+        return new NodeRequest(request);
     }
 
 }

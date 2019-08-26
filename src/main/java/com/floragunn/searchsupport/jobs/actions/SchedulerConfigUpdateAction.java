@@ -19,11 +19,11 @@ package com.floragunn.searchsupport.jobs.actions;
 
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
-import org.elasticsearch.action.Action;
 import org.elasticsearch.action.ActionListener;
+import org.elasticsearch.action.StreamableResponseActionType;
 import org.elasticsearch.client.Client;
 
-public class SchedulerConfigUpdateAction extends Action<SchedulerConfigUpdateResponse> {
+public class SchedulerConfigUpdateAction extends StreamableResponseActionType<SchedulerConfigUpdateResponse> {
     private final static Logger log = LogManager.getLogger(SchedulerConfigUpdateAction.class);
 
     public static final SchedulerConfigUpdateAction INSTANCE = new SchedulerConfigUpdateAction();

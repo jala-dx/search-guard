@@ -3,10 +3,10 @@ package com.floragunn.searchsupport.util;
 import java.util.Collections;
 import java.util.Map;
 
-import org.elasticsearch.action.Action;
 import org.elasticsearch.action.ActionListener;
 import org.elasticsearch.action.ActionRequest;
 import org.elasticsearch.action.ActionResponse;
+import org.elasticsearch.action.ActionType;
 import org.elasticsearch.client.Client;
 import org.elasticsearch.client.FilterClient;
 import org.elasticsearch.common.util.concurrent.ThreadContext;
@@ -22,7 +22,7 @@ public class ContextHeaderDecoratorClient extends FilterClient {
     }
 
     @Override
-    protected <Request extends ActionRequest, Response extends ActionResponse> void doExecute(Action<Response> action, Request request,
+    protected <Request extends ActionRequest, Response extends ActionResponse> void doExecute(ActionType<Response> action, Request request,
             ActionListener<Response> listener) {
 
         ThreadContext threadContext = threadPool().getThreadContext();
@@ -33,5 +33,4 @@ public class ContextHeaderDecoratorClient extends FilterClient {
             super.doExecute(action, request, listener);
         }
     }
-
 }

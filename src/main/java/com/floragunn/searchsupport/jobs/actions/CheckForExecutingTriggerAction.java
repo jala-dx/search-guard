@@ -2,11 +2,9 @@ package com.floragunn.searchsupport.jobs.actions;
 
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
-import org.elasticsearch.action.Action;
-import org.elasticsearch.action.ActionListener;
-import org.elasticsearch.client.Client;
+import org.elasticsearch.action.StreamableResponseActionType;
 
-public class CheckForExecutingTriggerAction extends Action<CheckForExecutingTriggerResponse> {
+public class CheckForExecutingTriggerAction extends StreamableResponseActionType<CheckForExecutingTriggerResponse> {
     private final static Logger log = LogManager.getLogger(CheckForExecutingTriggerAction.class);
 
     public static final CheckForExecutingTriggerAction INSTANCE = new CheckForExecutingTriggerAction();

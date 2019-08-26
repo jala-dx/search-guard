@@ -18,7 +18,6 @@
 package com.floragunn.searchsupport.jobs.actions;
 
 import java.io.IOException;
-import java.util.Arrays;
 import java.util.List;
 
 import org.apache.logging.log4j.LogManager;
@@ -34,16 +33,9 @@ import org.elasticsearch.common.inject.Inject;
 import org.elasticsearch.common.io.stream.StreamInput;
 import org.elasticsearch.common.io.stream.StreamOutput;
 import org.elasticsearch.common.settings.Settings;
-import org.elasticsearch.common.xcontent.XContentHelper;
-import org.elasticsearch.common.xcontent.XContentType;
 import org.elasticsearch.threadpool.ThreadPool;
 import org.elasticsearch.transport.TransportService;
-import org.quartz.Scheduler;
-import org.quartz.impl.SchedulerRepository;
 
-import com.floragunn.searchguard.configuration.SearchGuardLicense;
-import com.floragunn.searchguard.support.LicenseHelper;
-import com.floragunn.searchsupport.jobs.SchedulerBuilder;
 import com.floragunn.searchsupport.jobs.core.IndexJobStateStore;
 
 public class TransportSchedulerConfigUpdateAction extends
@@ -58,10 +50,6 @@ public class TransportSchedulerConfigUpdateAction extends
                 TransportSchedulerConfigUpdateAction.NodeRequest::new, ThreadPool.Names.MANAGEMENT,
                 TransportSchedulerConfigUpdateAction.NodeResponse.class);
 
-    }
-
-    protected NodeRequest newNodeRequest(final String nodeId, final SchedulerConfigUpdateRequest request) {
-        return new NodeRequest(nodeId, request);
     }
 
     @Override
@@ -114,8 +102,7 @@ public class TransportSchedulerConfigUpdateAction extends
         public NodeRequest() {
         }
 
-        public NodeRequest(final String nodeId, final SchedulerConfigUpdateRequest request) {
-            super(nodeId);
+        public NodeRequest(final SchedulerConfigUpdateRequest request) {
             this.request = request;
         }
 
@@ -183,6 +170,11 @@ public class TransportSchedulerConfigUpdateAction extends
         public static enum Status {
             SUCCESS, NO_SUCH_JOB_STORE, EXCEPTION
         }
+    }
+
+    @Override
+    protected NodeRequest newNodeRequest(SchedulerConfigUpdateRequest request) {
+        return new NodeRequest(request);
     }
 
 }
