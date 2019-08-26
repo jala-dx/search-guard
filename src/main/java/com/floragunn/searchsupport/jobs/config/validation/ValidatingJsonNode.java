@@ -93,7 +93,7 @@ public class ValidatingJsonNode {
             }
         }
 
-        validationErrors.add(new InvalidAttributeValue(attribute, attribute, enumClass, jsonNode));
+        validationErrors.add(new InvalidAttributeValue(attribute, value, enumClass, jsonNode));
 
         return defaultValue;
     }

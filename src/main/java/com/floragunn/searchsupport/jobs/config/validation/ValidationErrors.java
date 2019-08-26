@@ -48,7 +48,12 @@ public class ValidationErrors implements ToXContent {
 
             if (attribute != null && !"_".equals(attribute)) {
                 if (entry.getKey() != null && !"_".equals(entry.getKey())) {
-                    subAttribute = attribute + "." + entry.getKey();
+                    if (entry.getKey().startsWith("[")) {
+                        subAttribute = attribute + entry.getKey();
+                    } else {
+                        subAttribute = attribute + "." + entry.getKey();
+                    }
+
                 } else {
                     subAttribute = attribute;
                 }
