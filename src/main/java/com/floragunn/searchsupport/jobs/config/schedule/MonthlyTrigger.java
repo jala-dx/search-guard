@@ -103,13 +103,13 @@ public class MonthlyTrigger extends HumanReadableCronTrigger<MonthlyTrigger> {
 
         JsonNode onNode = jsonNode.get("on");
 
-        if (onNode.isArray()) {
+        if (onNode != null && onNode.isArray()) {
             on = new ArrayList<>(onNode.size());
 
             for (JsonNode onNodeElement : onNode) {
                 on.add(getMonth(onNodeElement, validationErrors));
             }
-        } else if (onNode.isNumber()) {
+        } else if (onNode != null && onNode.isNumber()) {
             on = Collections.singletonList(getMonth(onNode, validationErrors));
         } else {
             on = Collections.emptyList();
@@ -118,13 +118,13 @@ public class MonthlyTrigger extends HumanReadableCronTrigger<MonthlyTrigger> {
         try {
             JsonNode atNode = jsonNode.get("at");
 
-            if (atNode.isArray()) {
+            if (atNode != null && atNode.isArray()) {
                 at = new ArrayList<>(atNode.size());
 
                 for (JsonNode atNodeElement : atNode) {
                     at.add(parseTimeOfDay(atNodeElement.textValue()));
                 }
-            } else if (atNode.isTextual()) {
+            } else if (atNode != null && atNode.isTextual()) {
                 at = Collections.singletonList(parseTimeOfDay(atNode.textValue()));
             } else {
                 at = Collections.emptyList();

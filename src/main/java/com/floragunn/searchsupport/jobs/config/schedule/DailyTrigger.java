@@ -87,13 +87,13 @@ public class DailyTrigger extends HumanReadableCronTrigger<DailyTrigger> {
         try {
             JsonNode atNode = jsonNode.get("at");
 
-            if (atNode.isArray()) {
+            if (atNode != null && atNode.isArray()) {
                 at = new ArrayList<>(atNode.size());
 
                 for (JsonNode atNodeElement : atNode) {
                     at.add(parseTimeOfDay(atNodeElement.textValue()));
                 }
-            } else if (atNode.isTextual()) {
+            } else if (atNode != null && atNode.isTextual()) {
                 at = Collections.singletonList(parseTimeOfDay(atNode.textValue()));
             } else {
                 at = Collections.emptyList();
