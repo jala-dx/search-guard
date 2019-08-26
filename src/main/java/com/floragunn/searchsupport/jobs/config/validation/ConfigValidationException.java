@@ -33,7 +33,7 @@ public class ConfigValidationException extends Exception {
         if (size == 1) {
             ValidationError onlyError = validationErrors.getOnlyValidationError();
 
-            if (onlyError.getAttribute() != null) {
+            if (onlyError.getAttribute() != null && !"_".equals(onlyError.getAttribute())) {
                 return "'" + onlyError.getAttribute() + "': " + onlyError.getMessage();
             } else {
                 return onlyError.getMessage();
