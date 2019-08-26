@@ -1,10 +1,9 @@
 package com.floragunn.searchsupport.jobs.config;
 
-import java.text.ParseException;
-
 import org.quartz.Job;
 import org.quartz.JobKey;
 
+import com.floragunn.searchsupport.jobs.config.validation.ConfigValidationException;
 import com.jayway.jsonpath.ReadContext;
 
 public class DefaultJobConfigFactory extends AbstractJobConfigFactory<DefaultJobConfig> implements JobConfigFactory<DefaultJobConfig> {
@@ -17,7 +16,7 @@ public class DefaultJobConfigFactory extends AbstractJobConfigFactory<DefaultJob
         return new DefaultJobConfig(getJobClass(ctx));
     }
 
-    protected DefaultJobConfig createFromReadContext(String id, ReadContext ctx, long version) throws ParseException {
+    protected DefaultJobConfig createFromReadContext(String id, ReadContext ctx, long version) throws ConfigValidationException {
         DefaultJobConfig result = createObject(id, ctx);
         JobKey jobKey = getJobKey(id, ctx);
 

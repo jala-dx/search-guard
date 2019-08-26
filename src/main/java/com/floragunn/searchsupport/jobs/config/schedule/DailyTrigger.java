@@ -15,6 +15,8 @@ import org.quartz.TimeOfDay;
 import org.quartz.impl.triggers.CronTriggerImpl;
 
 import com.fasterxml.jackson.databind.JsonNode;
+import com.floragunn.searchsupport.jobs.config.validation.ConfigValidationException;
+import com.floragunn.searchsupport.jobs.config.validation.ValidationErrors;
 
 public class DailyTrigger extends HumanReadableCronTrigger<DailyTrigger> {
 
@@ -25,7 +27,7 @@ public class DailyTrigger extends HumanReadableCronTrigger<DailyTrigger> {
     public DailyTrigger(List<TimeOfDay> at, TimeZone timeZone) {
         this.at = Collections.unmodifiableList(at);
         this.timeZone = timeZone;
-        
+
         init();
     }
 
@@ -77,22 +79,30 @@ public class DailyTrigger extends HumanReadableCronTrigger<DailyTrigger> {
         return builder;
     }
 
-    public static DailyTrigger create(JsonNode jsonNode, TimeZone timeZone) throws ParseException {
-        List<TimeOfDay> at;
+    public static DailyTrigger create(JsonNode jsonNode, TimeZone timeZone) throws ConfigValidationException {
+        ValidationErrors validationErrors = new ValidationErrors();
 
-        JsonNode atNode = jsonNode.get("at");
+        List<TimeOfDay> at = null;
 
-        if (atNode.isArray()) {
-            at = new ArrayList<>(atNode.size());
+        try {
+            JsonNode atNode = jsonNode.get("at");
 
-            for (JsonNode atNodeElement : atNode) {
-                at.add(parseTimeOfDay(atNodeElement.textValue()));
+            if (atNode.isArray()) {
+                at = new ArrayList<>(atNode.size());
+
+                for (JsonNode atNodeElement : atNode) {
+                    at.add(parseTimeOfDay(atNodeElement.textValue()));
+                }
+            } else if (atNode.isTextual()) {
+                at = Collections.singletonList(parseTimeOfDay(atNode.textValue()));
+            } else {
+                at = Collections.emptyList();
             }
-        } else if (atNode.isTextual()) {
-            at = Collections.singletonList(parseTimeOfDay(atNode.textValue()));
-        } else {
-            at = Collections.emptyList();
+        } catch (ConfigValidationException e) {
+            validationErrors.add("at", e);
         }
+
+        validationErrors.throwExceptionForPresentErrors();
 
         return new DailyTrigger(at, timeZone);
     }

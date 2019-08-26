@@ -17,6 +17,9 @@ import org.quartz.TimeOfDay;
 import org.quartz.impl.triggers.CronTriggerImpl;
 
 import com.fasterxml.jackson.databind.JsonNode;
+import com.floragunn.searchsupport.jobs.config.validation.ConfigValidationException;
+import com.floragunn.searchsupport.jobs.config.validation.InvalidAttributeValue;
+import com.floragunn.searchsupport.jobs.config.validation.ValidationErrors;
 
 public class WeeklyTrigger extends HumanReadableCronTrigger<WeeklyTrigger> {
 
@@ -101,37 +104,49 @@ public class WeeklyTrigger extends HumanReadableCronTrigger<WeeklyTrigger> {
         return builder;
     }
 
-    public static WeeklyTrigger create(JsonNode jsonNode, TimeZone timeZone) throws ParseException {
-        List<DayOfWeek> on;
-        List<TimeOfDay> at;
+    public static WeeklyTrigger create(JsonNode jsonNode, TimeZone timeZone) throws ConfigValidationException {
+        ValidationErrors validationErrors = new ValidationErrors();
 
-        JsonNode onNode = jsonNode.get("on");
+        List<DayOfWeek> on = null;
+        List<TimeOfDay> at = null;
 
-        if (onNode.isArray()) {
-            on = new ArrayList<>(onNode.size());
+        try {
+            JsonNode onNode = jsonNode.get("on");
 
-            for (JsonNode onNodeElement : onNode) {
-                on.add(getDayOfWeek(onNodeElement.textValue()));
+            if (onNode.isArray()) {
+                on = new ArrayList<>(onNode.size());
+
+                for (JsonNode onNodeElement : onNode) {
+                    on.add(getDayOfWeek(onNodeElement.textValue()));
+                }
+            } else if (onNode.isTextual()) {
+                on = Collections.singletonList(getDayOfWeek(onNode.textValue()));
+            } else {
+                on = Collections.emptyList();
             }
-        } else if (onNode.isTextual()) {
-            on = Collections.singletonList(getDayOfWeek(onNode.textValue()));
-        } else {
-            on = Collections.emptyList();
+        } catch (ConfigValidationException e) {
+            validationErrors.add("on", e);
         }
 
-        JsonNode atNode = jsonNode.get("at");
+        try {
+            JsonNode atNode = jsonNode.get("at");
 
-        if (atNode.isArray()) {
-            at = new ArrayList<>(atNode.size());
+            if (atNode.isArray()) {
+                at = new ArrayList<>(atNode.size());
 
-            for (JsonNode atNodeElement : atNode) {
-                at.add(parseTimeOfDay(atNodeElement.textValue()));
+                for (JsonNode atNodeElement : atNode) {
+                    at.add(parseTimeOfDay(atNodeElement.textValue()));
+                }
+            } else if (atNode.isTextual()) {
+                at = Collections.singletonList(parseTimeOfDay(atNode.textValue()));
+            } else {
+                at = Collections.emptyList();
             }
-        } else if (atNode.isTextual()) {
-            at = Collections.singletonList(parseTimeOfDay(atNode.textValue()));
-        } else {
-            at = Collections.emptyList();
+        } catch (ConfigValidationException e) {
+            validationErrors.add("at", e);
         }
+
+        validationErrors.throwExceptionForPresentErrors();
 
         return new WeeklyTrigger(on, at, timeZone);
     }
@@ -175,7 +190,7 @@ public class WeeklyTrigger extends HumanReadableCronTrigger<WeeklyTrigger> {
         }
     }
 
-    private static DayOfWeek getDayOfWeek(String string) throws ParseException {
+    private static DayOfWeek getDayOfWeek(String string) throws ConfigValidationException {
         switch (string) {
         case "sunday":
         case "sun":
@@ -199,7 +214,7 @@ public class WeeklyTrigger extends HumanReadableCronTrigger<WeeklyTrigger> {
         case "sat":
             return DayOfWeek.SATURDAY;
         default:
-            throw new ParseException("Illegal day of week: " + string, -1);
+            throw new ConfigValidationException(new InvalidAttributeValue("on", string, "mon|tue|wed|thu|fri|sat|sun", null));
         }
     }
 }

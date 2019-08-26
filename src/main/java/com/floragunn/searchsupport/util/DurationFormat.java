@@ -1,9 +1,11 @@
 package com.floragunn.searchsupport.util;
 
-import java.text.ParseException;
 import java.time.Duration;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
+
+import com.floragunn.searchsupport.jobs.config.validation.ConfigValidationException;
+import com.floragunn.searchsupport.jobs.config.validation.InvalidAttributeValue;
 
 // TODO unit test
 public class DurationFormat {
@@ -13,7 +15,7 @@ public class DurationFormat {
     private final Pattern pattern = Pattern
             .compile("((?<w>[0-9]+)w)?((?<d>[0-9]+)d)?((?<h>[0-9]+)h)?((?<m>[0-9]+)m)?((?<s>[0-9]+)s)?((?<ms>[0-9]+)ms)?");
 
-    public Duration parse(String durationString) throws ParseException {
+    public Duration parse(String durationString) throws ConfigValidationException {
         if (durationString == null) {
             return null;
         }
@@ -25,7 +27,8 @@ public class DurationFormat {
         Matcher matcher = pattern.matcher(durationString);
 
         if (!matcher.matches()) {
-            throw new ParseException("Invalid duration: " + durationString, -1);
+            throw new ConfigValidationException(
+                    new InvalidAttributeValue(null, durationString, "<Weeks>w? <Days>d? <Hours>h? <Minutes>m? <Seconds>s? <Milliseconds>ms?", null));
         }
 
         Duration result = Duration.ZERO;

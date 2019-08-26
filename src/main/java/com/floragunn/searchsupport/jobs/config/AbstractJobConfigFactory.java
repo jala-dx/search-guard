@@ -28,6 +28,9 @@ import com.fasterxml.jackson.databind.node.TextNode;
 import com.floragunn.searchsupport.jobs.config.schedule.DailyTrigger;
 import com.floragunn.searchsupport.jobs.config.schedule.MonthlyTrigger;
 import com.floragunn.searchsupport.jobs.config.schedule.WeeklyTrigger;
+import com.floragunn.searchsupport.jobs.config.validation.ConfigValidationException;
+import com.floragunn.searchsupport.jobs.config.validation.InvalidAttributeValue;
+import com.floragunn.searchsupport.jobs.config.validation.ValidationErrors;
 import com.floragunn.searchsupport.util.DurationFormat;
 import com.floragunn.searchsupport.util.JacksonTools;
 import com.jayway.jsonpath.Configuration;
@@ -63,7 +66,7 @@ public abstract class AbstractJobConfigFactory<JobConfigType extends JobConfig> 
     }
 
     @Override
-    public JobConfigType createFromBytes(String id, BytesReference source, long version) throws ParseException {
+    public JobConfigType createFromBytes(String id, BytesReference source, long version) throws ConfigValidationException {
         ReadContext ctx = JsonPath.using(JSON_PATH_CONFIG).parse(source.utf8ToString());
 
         return createFromReadContext(id, ctx, version);
@@ -84,7 +87,7 @@ public abstract class AbstractJobConfigFactory<JobConfigType extends JobConfig> 
         return jobBuilder.build();
     }
 
-    abstract protected JobConfigType createFromReadContext(String id, ReadContext ctx, long version) throws ParseException;
+    abstract protected JobConfigType createFromReadContext(String id, ReadContext ctx, long version) throws ConfigValidationException;
 
     protected JobKey getJobKey(String id, ReadContext ctx) {
         return new JobKey(id, group);
@@ -114,7 +117,9 @@ public abstract class AbstractJobConfigFactory<JobConfigType extends JobConfig> 
         }
     }
 
-    protected List<Trigger> getTriggers(JobKey jobKey, ReadContext ctx) throws ParseException {
+    protected List<Trigger> getTriggers(JobKey jobKey, ReadContext ctx) throws ConfigValidationException {
+        ValidationErrors validationErrors = new ValidationErrors();
+
         ArrayList<Trigger> triggers = new ArrayList<>();
 
         String timeZoneId = ctx.read(timezonePath, String.class);
@@ -122,37 +127,63 @@ public abstract class AbstractJobConfigFactory<JobConfigType extends JobConfig> 
 
         if (timeZoneId != null) {
             timeZone = TimeZone.getTimeZone(timeZoneId);
+
+            if (timeZone == null) {
+                validationErrors.add(new InvalidAttributeValue("timezone", timeZoneId, TimeZone.class, null));
+            }
         }
 
         Object cronScheduleTriggers = ctx.read(cronScheduleTriggerPath);
 
         if (cronScheduleTriggers != null) {
-            triggers.addAll(getCronScheduleTriggers(jobKey, cronScheduleTriggers, timeZone));
+            try {
+                triggers.addAll(getCronScheduleTriggers(jobKey, cronScheduleTriggers, timeZone));
+            } catch (ConfigValidationException e) {
+                validationErrors.add("cron", e);
+            }
         }
 
         Object intervalScheduleTriggers = ctx.read(intervalScheduleTriggerPath);
 
         if (intervalScheduleTriggers != null) {
-            triggers.addAll(getIntervalScheduleTriggers(jobKey, intervalScheduleTriggers));
+            try {
+                triggers.addAll(getIntervalScheduleTriggers(jobKey, intervalScheduleTriggers));
+            } catch (ConfigValidationException e) {
+                validationErrors.add("interval", e);
+            }
         }
 
         Object weeklyTriggers = ctx.read(weeklyScheduleTriggerPath);
 
         if (weeklyTriggers != null) {
-            triggers.addAll(getWeeklyTriggers(jobKey, weeklyTriggers, timeZone));
+            try {
+                triggers.addAll(getWeeklyTriggers(jobKey, weeklyTriggers, timeZone));
+            } catch (ConfigValidationException e) {
+                validationErrors.add("weekly", e);
+            }
         }
 
         Object dailyTriggers = ctx.read(dailyScheduleTriggerPath);
 
         if (dailyTriggers != null) {
-            triggers.addAll(getDailyTriggers(jobKey, dailyTriggers, timeZone));
+            try {
+                triggers.addAll(getDailyTriggers(jobKey, dailyTriggers, timeZone));
+            } catch (ConfigValidationException e) {
+                validationErrors.add("daily", e);
+            }
         }
 
         Object monthlyTriggers = ctx.read(monthlyScheduleTriggerPath);
 
         if (monthlyTriggers != null) {
-            triggers.addAll(getMonthlyTriggers(jobKey, monthlyTriggers, timeZone));
+            try {
+                triggers.addAll(getMonthlyTriggers(jobKey, monthlyTriggers, timeZone));
+            } catch (ConfigValidationException e) {
+                validationErrors.add("monthly", e);
+            }
         }
+
+        validationErrors.throwExceptionForPresentErrors();
 
         return triggers;
     }
@@ -169,7 +200,7 @@ public abstract class AbstractJobConfigFactory<JobConfigType extends JobConfig> 
         return jobClass;
     }
 
-    protected List<Trigger> getCronScheduleTriggers(JobKey jobKey, Object scheduleTriggers, TimeZone timeZone) throws ParseException {
+    protected List<Trigger> getCronScheduleTriggers(JobKey jobKey, Object scheduleTriggers, TimeZone timeZone) throws ConfigValidationException {
         List<Trigger> result = new ArrayList<>();
 
         if (scheduleTriggers instanceof TextNode) {
@@ -187,7 +218,7 @@ public abstract class AbstractJobConfigFactory<JobConfigType extends JobConfig> 
         return result;
     }
 
-    protected List<Trigger> getIntervalScheduleTriggers(JobKey jobKey, Object scheduleTriggers) throws ParseException {
+    protected List<Trigger> getIntervalScheduleTriggers(JobKey jobKey, Object scheduleTriggers) throws ConfigValidationException {
         List<Trigger> result = new ArrayList<>();
 
         if (scheduleTriggers instanceof TextNode) {
@@ -205,7 +236,7 @@ public abstract class AbstractJobConfigFactory<JobConfigType extends JobConfig> 
         return result;
     }
 
-    protected List<Trigger> getWeeklyTriggers(JobKey jobKey, Object scheduleTriggers, TimeZone timeZone) throws ParseException {
+    protected List<Trigger> getWeeklyTriggers(JobKey jobKey, Object scheduleTriggers, TimeZone timeZone) throws ConfigValidationException {
         List<Trigger> result = new ArrayList<>();
 
         if (scheduleTriggers instanceof ObjectNode) {
@@ -219,7 +250,7 @@ public abstract class AbstractJobConfigFactory<JobConfigType extends JobConfig> 
         return result;
     }
 
-    protected List<Trigger> getMonthlyTriggers(JobKey jobKey, Object scheduleTriggers, TimeZone timeZone) throws ParseException {
+    protected List<Trigger> getMonthlyTriggers(JobKey jobKey, Object scheduleTriggers, TimeZone timeZone) throws ConfigValidationException {
         List<Trigger> result = new ArrayList<>();
 
         if (scheduleTriggers instanceof ObjectNode) {
@@ -233,7 +264,7 @@ public abstract class AbstractJobConfigFactory<JobConfigType extends JobConfig> 
         return result;
     }
 
-    protected List<Trigger> getDailyTriggers(JobKey jobKey, Object scheduleTriggers, TimeZone timeZone) throws ParseException {
+    protected List<Trigger> getDailyTriggers(JobKey jobKey, Object scheduleTriggers, TimeZone timeZone) throws ConfigValidationException {
         List<Trigger> result = new ArrayList<>();
 
         if (scheduleTriggers instanceof ObjectNode) {
@@ -251,14 +282,20 @@ public abstract class AbstractJobConfigFactory<JobConfigType extends JobConfig> 
         return DigestUtils.md5Hex(trigger);
     }
 
-    protected Trigger createCronTrigger(JobKey jobKey, String cronExpression, TimeZone timeZone) throws ParseException {
+    protected Trigger createCronTrigger(JobKey jobKey, String cronExpression, TimeZone timeZone) throws ConfigValidationException {
         String triggerKey = getTriggerKey(cronExpression);
 
-        return TriggerBuilder.newTrigger().withIdentity(jobKey.getName() + "___" + triggerKey, group).forJob(jobKey)
-                .withSchedule(CronScheduleBuilder.cronScheduleNonvalidatedExpression(cronExpression).inTimeZone(timeZone)).build();
+        try {
+            return TriggerBuilder.newTrigger().withIdentity(jobKey.getName() + "___" + triggerKey, group).forJob(jobKey)
+                    .withSchedule(CronScheduleBuilder.cronScheduleNonvalidatedExpression(cronExpression).inTimeZone(timeZone)).build();
+        } catch (ParseException e) {
+            throw new ConfigValidationException(new InvalidAttributeValue(null, cronExpression,
+                    "Quartz Cron Expression: <Seconds: 0-59|*> <Minutes: 0-59|*> <Hours: 0-23|*> <Day-of-Month: 1-31|?|*> <Month: JAN-DEC|*> <Day-of-Week: SUN-SAT|?|*> <Year: 1970-2199|*>?. Numeric ranges: 1-2; Several distinct values: 1,2; Increments: 0/15",
+                    null).message("Invalid cron expression: " + e.getMessage()).cause(e));
+        }
     }
 
-    protected Trigger createIntervalScheduleTrigger(JobKey jobKey, String interval) throws ParseException {
+    protected Trigger createIntervalScheduleTrigger(JobKey jobKey, String interval) throws ConfigValidationException {
         String triggerKey = getTriggerKey(interval);
         Duration duration = DurationFormat.INSTANCE.parse(interval);
 
@@ -266,7 +303,7 @@ public abstract class AbstractJobConfigFactory<JobConfigType extends JobConfig> 
                 .withSchedule(SimpleScheduleBuilder.simpleSchedule().repeatForever().withIntervalInMilliseconds(duration.toMillis())).build();
     }
 
-    protected Trigger createWeeklyTrigger(JobKey jobKey, JsonNode jsonNode, TimeZone timeZone) throws ParseException {
+    protected Trigger createWeeklyTrigger(JobKey jobKey, JsonNode jsonNode, TimeZone timeZone) throws ConfigValidationException {
         String triggerKey = getTriggerKey(jsonNode.toString());
 
         WeeklyTrigger trigger = WeeklyTrigger.create(jsonNode, timeZone);
@@ -276,7 +313,7 @@ public abstract class AbstractJobConfigFactory<JobConfigType extends JobConfig> 
         return trigger;
     }
 
-    protected Trigger createMonthlyTrigger(JobKey jobKey, JsonNode jsonNode, TimeZone timeZone) throws ParseException {
+    protected Trigger createMonthlyTrigger(JobKey jobKey, JsonNode jsonNode, TimeZone timeZone) throws ConfigValidationException {
         String triggerKey = getTriggerKey(jsonNode.toString());
 
         MonthlyTrigger trigger = MonthlyTrigger.create(jsonNode, timeZone);
@@ -286,7 +323,7 @@ public abstract class AbstractJobConfigFactory<JobConfigType extends JobConfig> 
         return trigger;
     }
 
-    protected Trigger createDailyTrigger(JobKey jobKey, JsonNode jsonNode, TimeZone timeZone) throws ParseException {
+    protected Trigger createDailyTrigger(JobKey jobKey, JsonNode jsonNode, TimeZone timeZone) throws ConfigValidationException {
         String triggerKey = getTriggerKey(jsonNode.toString());
 
         DailyTrigger trigger = DailyTrigger.create(jsonNode, timeZone);
