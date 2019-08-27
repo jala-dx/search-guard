@@ -51,6 +51,7 @@ import com.floragunn.searchguard.ssl.util.SSLConfigConstants;
 import com.floragunn.searchguard.support.ConfigConstants;
 import com.floragunn.searchguard.test.DynamicSgConfig;
 import com.floragunn.searchguard.test.SingleClusterTest;
+import com.floragunn.searchguard.test.helper.cluster.ClusterConfiguration;
 import com.floragunn.searchguard.test.helper.file.FileHelper;
 import com.floragunn.searchguard.test.helper.rest.RestHelper;
 import com.floragunn.searchguard.test.helper.rest.RestHelper.HttpResponse;
@@ -957,6 +958,49 @@ public class IntegrationTests extends SingleClusterTest {
 //        res = rh.executePostRequest("searchguard/_freeze", "",
 //                encodeBasicHeader("nagilum", "nagilum"));
 //        Assert.assertTrue(res.getStatusCode() >= 400);
+
+    }
+    
+    @Test
+    public void testRolloverWithSgIndexExcluded() throws Exception {
+        final Settings settings = Settings.builder()
+                .put(ConfigConstants.SEARCHGUARD_FILTER_SGINDEX_FROM_ALL_REQUESTS, true)
+                .build();
+
+        setup(Settings.EMPTY, new DynamicSgConfig(), settings);
+        
+        final RestHelper rh = nonSslRestHelper();
+        
+        try (TransportClient tc = getInternalTransportClient()) {
+            tc.index(new IndexRequest("foo").setRefreshPolicy(RefreshPolicy.IMMEDIATE).source("{\"content\":\"foo\"}", XContentType.JSON)).actionGet();
+            tc.index(new IndexRequest("bar").setRefreshPolicy(RefreshPolicy.IMMEDIATE).source("{\"content\":\"bar\"}", XContentType.JSON)).actionGet();
+            tc.index(new IndexRequest("baz").setRefreshPolicy(RefreshPolicy.IMMEDIATE).source("{\"content\":\"baz\"}", XContentType.JSON)).actionGet();
+            tc.index(new IndexRequest("tux").setRefreshPolicy(RefreshPolicy.IMMEDIATE).source("{\"content\":\"tux\"}", XContentType.JSON)).actionGet();
+            tc.admin().indices().aliases(new IndicesAliasesRequest().addAliasAction(AliasActions.add().indices("foo").alias("demo"))).actionGet();
+        }
+        
+        HttpResponse res = rh.executeGetRequest("_cat/aliases", encodeBasicHeader("nagilum", "nagilum"));
+        Assert.assertTrue(res.getBody().contains("demo foo - - -"));
+        Assert.assertFalse(res.getBody().contains("baz"));
+        Assert.assertFalse(res.getBody().contains("bar"));
+        Assert.assertFalse(res.getBody().contains("tux"));
+
+        String data = "{\"actions\": [\n" + 
+                "        { \"remove\": { \"index\": \"*\", \"alias\": \"demo\" } },\n" + 
+                "        { \"add\": { \"index\": \"tux\", \"alias\": \"demo\" } }\n" + 
+                "    ]}";
+
+        res = rh.executePostRequest("_aliases?pretty", data, encodeBasicHeader("nagilum", "nagilum"));
+        Assert.assertEquals(HttpStatus.SC_OK, res.getStatusCode());
+
+        
+        res = rh.executeGetRequest("_cat/aliases", encodeBasicHeader("nagilum", "nagilum"));
+        Assert.assertTrue(res.getBody().contains("demo tux - - -"));
+        Assert.assertFalse(res.getBody().contains("baz"));
+        Assert.assertFalse(res.getBody().contains("bar"));
+        Assert.assertFalse(res.getBody().contains("foo"));
+        Assert.assertEquals(HttpStatus.SC_OK, res.getStatusCode());
+
 
     }
 

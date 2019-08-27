@@ -417,20 +417,21 @@ public final class IndexResolverReplacer implements ConfigurationChangeListener 
     }*/
 
     //dnfof
-    public boolean replace(final TransportRequest request, boolean retainMode, String... replacements) {
+    public boolean replace(final TransportRequest request, /*boolean retainMode,*/ final String... replacements) {
         return getOrReplaceAllIndices(request, new IndicesProvider() {
 
             @Override
             public String[] provide(String[] original, Object request, boolean supportsReplace) {
                 if(supportsReplace) {
 
-                    if(retainMode && !isAllWithNoRemote(original)) {
+                    if(/*retainMode &&*/ !isAllWithNoRemote(original)) {
                         final Resolved resolved = resolveRequest(request);
                         final List<String> retained = WildcardMatcher.getMatchAny(resolved.getAllIndices(), replacements);
                         retained.addAll(resolved.getRemoteIndices());
                         return retained.toArray(new String[0]);
+                    } else {
+                        return replacements;
                     }
-                    return replacements;
                 } else {
                     return NOOP;
                 }
@@ -457,11 +458,11 @@ public final class IndexResolverReplacer implements ConfigurationChangeListener 
                 if(log.isTraceEnabled()) {
                     log.trace("Resolved patterns {} for {} ({}) to {}", original, localRequest.getClass().getSimpleName(), request.getClass().getSimpleName(), iResolved);
                 }
-
+                
                 return IndicesProvider.NOOP;
             }
         }, false);
-
+        
         if(!isIndicesRequest.get()) {
             //not an indices request
             return Resolved._LOCAL_ALL;

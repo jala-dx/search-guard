@@ -494,7 +494,7 @@ public class PrivilegesEvaluator implements ConfigurationChangeListener {
                             return presponse;
                         }
 
-                        if (irr.replace(request, true, reduced.toArray(new String[0]))) {
+                        if (irr.replace(request, reduced.toArray(new String[0]))) {
                             presponse.missingPrivileges.clear();
                             presponse.allowed = true;
                             return presponse;
@@ -600,7 +600,7 @@ public class PrivilegesEvaluator implements ConfigurationChangeListener {
                 return presponse;
             }
 
-            if (irr.replace(request, true, reduced.toArray(new String[0]))) {
+            if (irr.replace(request, reduced.toArray(new String[0]))) {
                 presponse.missingPrivileges.clear();
                 presponse.allowed = true;
                 return presponse;

@@ -89,7 +89,7 @@ public class SearchGuardIndexAccessEvaluator {
                     presponse.allowed = false;
                     return presponse.markComplete();
                 }
-                irr.replace(request, false, allWithoutSg.toArray(new String[0]));
+                irr.replace(request, allWithoutSg.toArray(new String[0]));
                 if(log.isDebugEnabled()) {
                     log.debug("Filtered '{}', resulting list is {}", searchguardIndex, allWithoutSg);
                 }
@@ -107,7 +107,7 @@ public class SearchGuardIndexAccessEvaluator {
                 && WildcardMatcher.matchAny(sgDeniedActionPatterns, action)) {
             
             if(filterSgIndex) {
-                irr.replace(request, false, "*","-"+searchguardIndex);
+                irr.replace(request, "*","-"+searchguardIndex);
                 if(log.isDebugEnabled()) {
                     log.debug("Filtered '{}'from {}, resulting list with *,-{} is {}", searchguardIndex, requestedResolved, searchguardIndex, irr.resolveRequest(request));
                 }
