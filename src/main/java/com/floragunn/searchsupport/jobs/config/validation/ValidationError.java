@@ -12,12 +12,12 @@ public class ValidationError implements ToXContentObject {
     private String message;
     private Exception cause;
 
-    ValidationError(String attribute, String message) {
+    public ValidationError(String attribute, String message) {
         this.attribute = attribute != null ? attribute : "_";
         this.message = message;
     }
 
-    ValidationError(String attribute, String message, JsonNode jsonNode) {
+    public ValidationError(String attribute, String message, JsonNode jsonNode) {
         this.attribute = attribute != null ? attribute : "_";
         this.message = message;
     }

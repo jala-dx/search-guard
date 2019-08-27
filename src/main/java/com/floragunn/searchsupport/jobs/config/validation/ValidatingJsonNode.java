@@ -3,10 +3,14 @@ package com.floragunn.searchsupport.jobs.config.validation;
 import java.net.URI;
 import java.net.URISyntaxException;
 import java.time.Duration;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.List;
 import java.util.TimeZone;
 import java.util.function.Function;
 
 import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.floragunn.searchsupport.util.DurationFormat;
 
 public class ValidatingJsonNode {
@@ -32,6 +36,28 @@ public class ValidatingJsonNode {
             return jsonNode.get(attribute).asText();
         } else {
             return null;
+        }
+    }
+
+    public List<String> stringList(String attribute) {
+        if (jsonNode.hasNonNull(attribute)) {
+            JsonNode subNode = jsonNode.get(attribute);
+
+            if (subNode.isArray()) {
+                ArrayNode arrayNode = (ArrayNode) subNode;
+                List<String> result = new ArrayList<>(arrayNode.size());
+
+                for (JsonNode child : arrayNode) {
+                    result.add(child.asText());
+                }
+
+                return result;
+            } else {
+                return Collections.singletonList(subNode.textValue());
+            }
+
+        } else {
+            return Collections.emptyList();
         }
     }
 
