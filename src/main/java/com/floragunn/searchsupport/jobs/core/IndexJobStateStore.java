@@ -67,6 +67,7 @@ import org.quartz.spi.SchedulerSignaler;
 import org.quartz.spi.TriggerFiredBundle;
 import org.quartz.spi.TriggerFiredResult;
 
+import com.floragunn.searchsupport.jobs.JobConfigListener;
 import com.floragunn.searchsupport.jobs.actions.CheckForExecutingTriggerAction;
 import com.floragunn.searchsupport.jobs.actions.CheckForExecutingTriggerRequest;
 import com.floragunn.searchsupport.jobs.actions.CheckForExecutingTriggerResponse;
@@ -116,9 +117,10 @@ public class IndexJobStateStore<JobType extends com.floragunn.searchsupport.jobs
             new SingleElementBlockingQueue<Runnable>());
     private final ScheduledThreadPoolExecutor periodicMaintenanceExecutor = new ScheduledThreadPoolExecutor(1);
     private final ClusterService clusterService;
+    private final Collection<JobConfigListener<JobType>> jobConfigListeners;
 
     public IndexJobStateStore(String schedulerName, String statusIndexName, String nodeId, Client client, Iterable<JobType> jobConfigSource,
-            JobConfigFactory<JobType> jobFactory, ClusterService clusterService) {
+            JobConfigFactory<JobType> jobFactory, ClusterService clusterService, Collection<JobConfigListener<JobType>> jobConfigListeners) {
         this.schedulerName = schedulerName;
         this.statusIndexName = statusIndexName;
         this.nodeId = nodeId;
@@ -126,6 +128,7 @@ public class IndexJobStateStore<JobType extends com.floragunn.searchsupport.jobs
         this.jobConfigSource = jobConfigSource;
         this.jobFactory = jobFactory;
         this.clusterService = clusterService;
+        this.jobConfigListeners = new ArrayList<>(jobConfigListeners);
     }
 
     @Override
@@ -1278,6 +1281,9 @@ public class IndexJobStateStore<JobType extends com.floragunn.searchsupport.jobs
         Map<JobKey, InternalJobDetail> newJobs = new HashMap<>();
         Map<JobKey, InternalJobDetail> updatedJobs = new HashMap<>();
         Map<JobKey, InternalJobDetail> deletedJobs = new HashMap<>();
+        Set<JobType> newJobTypes = new HashSet<>();
+        Map<JobType, JobType> updatedJobTypes = new HashMap<>();
+        Set<JobType> deletedJobTypes = new HashSet<>();
         Set<JobKey> newJobKeys = new HashSet<>(newJobConfig.size());
 
         log.info("Updating jobs:\n" + newJobConfig + "\n");
@@ -1301,6 +1307,7 @@ public class IndexJobStateStore<JobType extends com.floragunn.searchsupport.jobs
                 if (existingJob == null) {
                     InternalJobDetail newJobDetail = createInternalJobDetailFromJobConfig(newJob, Collections.emptyMap());
                     newJobs.put(jobKey, newJobDetail);
+                    newJobTypes.add(newJob);
                     addToCollections(newJobDetail);
                     newJobDetail.engageTriggers();
 
@@ -1308,15 +1315,19 @@ public class IndexJobStateStore<JobType extends com.floragunn.searchsupport.jobs
                     InternalJobDetail existingJobDetail = this.keyToJobMap.get(existingJob.getJobKey());
 
                     if (existingJobDetail != null) {
+                       
                         if (updateJob(existingJobDetail, existingJob, newJob)) {
                             updatedJobs.put(jobKey, createInternalJobDetailFromJobConfig(newJob, Collections.emptyMap()));
                         }
+
+                        updatedJobTypes.put(existingJob, newJob);
                     } else {
                         log.info("Found existing job config but no matching job detail for " + existingJob
                                 + ". This is a bit weird. Will create job detail now.");
 
                         InternalJobDetail newJobDetail = createInternalJobDetailFromJobConfig(newJob, Collections.emptyMap());
                         newJobs.put(jobKey, newJobDetail);
+                        newJobTypes.add(newJob);
                         addToCollections(newJobDetail);
                         newJobDetail.engageTriggers();
                     }
@@ -1327,6 +1338,9 @@ public class IndexJobStateStore<JobType extends com.floragunn.searchsupport.jobs
                 if (!newJobKeys.contains(existingJob)) {
                     InternalJobDetail jobDetail = this.keyToJobMap.get(existingJob);
                     deletedJobs.put(existingJob, jobDetail);
+                    @SuppressWarnings("unchecked")
+                    JobType deletedJobConfig = (JobType) jobDetail.baseConfig;
+                    deletedJobTypes.add(deletedJobConfig);
                     removeJob(jobDetail);
                 }
             }
@@ -1340,6 +1354,8 @@ public class IndexJobStateStore<JobType extends com.floragunn.searchsupport.jobs
             log.info("Job update finished.\nNew Jobs: " + newJobs.values() + "\nUpdated Jobs: " + updatedJobs.values() + "\nDeleted Jobs: "
                     + deletedJobs.values());
 
+            notifyJobConfigListeners(newJobTypes, updatedJobTypes, deletedJobTypes);
+
             return "New: " + newJobs.values().size() + "\nUpdated: " + updatedJobs.size() + "\nDeleted Jobs: " + deletedJobs.size();
         } else {
             log.info("Job update finished. Nothing changed.");
@@ -1347,6 +1363,21 @@ public class IndexJobStateStore<JobType extends com.floragunn.searchsupport.jobs
             return "No changes";
         }
 
+    }
+
+    public void addJobConfigListener(JobConfigListener<JobType> jobCofigListener) {
+        this.jobConfigListeners.add(jobCofigListener);
+    }
+
+    private void notifyJobConfigListeners(Set<JobType> newJobs, Map<JobType, JobType> updatedJobs, Set<JobType> deletedJobs) {
+
+        for (JobConfigListener<JobType> listener : this.jobConfigListeners) {
+            try {
+                listener.onChange(newJobs, updatedJobs, deletedJobs);
+            } catch (Exception e) {
+                log.error("Exception in JobConfigListener.onChange()", e);
+            }
+        }
     }
 
     private synchronized boolean updateJob(InternalJobDetail existingJobDetail, JobType existingJobConfig, JobType newJobConfig) {

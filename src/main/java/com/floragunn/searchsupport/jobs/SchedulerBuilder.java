@@ -6,6 +6,7 @@ import java.lang.management.ThreadMXBean;
 import java.security.AccessController;
 import java.security.PrivilegedActionException;
 import java.security.PrivilegedExceptionAction;
+import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Date;
 import java.util.HashMap;
@@ -86,6 +87,7 @@ public class SchedulerBuilder<JobType extends JobConfig> {
     private JobFactory jobFactory;
     private Settings nodeSettings;
     private NodeEnvironment nodeEnvironment;
+    private List<JobConfigListener<JobType>> jobConfigListeners = new ArrayList<>();
 
     public SchedulerBuilder<JobType> name(String name) {
         this.name = name;
@@ -167,6 +169,11 @@ public class SchedulerBuilder<JobType extends JobConfig> {
         return this;
     }
 
+    public SchedulerBuilder<JobType> jobConfigListener(JobConfigListener<JobType> jobConfigListener) {
+        this.jobConfigListeners.add(jobConfigListener);
+        return this;
+    }
+
     public Scheduler build() throws SchedulerException {
         if (isSchedulerPermanentlyDisabledForLocalNode()) {
             log.info("Scheduler " + name + "is disabled for this node by node filter: " + this.nodeFilter);
@@ -198,7 +205,8 @@ public class SchedulerBuilder<JobType extends JobConfig> {
         }
 
         if (this.jobStore == null) {
-            this.jobStore = new IndexJobStateStore<>(name, stateIndex, nodeId, client, jobConfigSource, jobConfigFactory, clusterService);
+            this.jobStore = new IndexJobStateStore<>(name, stateIndex, nodeId, client, jobConfigSource, jobConfigFactory, clusterService,
+                    jobConfigListeners);
         }
 
         if (this.jobStore instanceof DistributedJobStore && this.jobDistributor != null) {
@@ -680,7 +688,7 @@ public class SchedulerBuilder<JobType extends JobConfig> {
             JobConfig jobConfig = getConfig(bundle);
             String authToken = jobConfig.getAuthToken();
             String authTokenAudience = jobConfig.getSecureAuthTokenAudience();
-            
+
             if (authToken != null && authTokenAudience != null) {
                 return new AuthorizingJobWrapper(job, authToken, authTokenAudience, threadContext);
             } else {
