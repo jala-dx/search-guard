@@ -972,10 +972,10 @@ public class IntegrationTests extends SingleClusterTest {
         final RestHelper rh = nonSslRestHelper();
         
         try (TransportClient tc = getInternalTransportClient()) {
-            tc.index(new IndexRequest("foo").setRefreshPolicy(RefreshPolicy.IMMEDIATE).source("{\"content\":\"foo\"}", XContentType.JSON)).actionGet();
-            tc.index(new IndexRequest("bar").setRefreshPolicy(RefreshPolicy.IMMEDIATE).source("{\"content\":\"bar\"}", XContentType.JSON)).actionGet();
-            tc.index(new IndexRequest("baz").setRefreshPolicy(RefreshPolicy.IMMEDIATE).source("{\"content\":\"baz\"}", XContentType.JSON)).actionGet();
-            tc.index(new IndexRequest("tux").setRefreshPolicy(RefreshPolicy.IMMEDIATE).source("{\"content\":\"tux\"}", XContentType.JSON)).actionGet();
+            tc.index(new IndexRequest("foo", "_doc").setRefreshPolicy(RefreshPolicy.IMMEDIATE).source("{\"content\":\"foo\"}", XContentType.JSON)).actionGet();
+            tc.index(new IndexRequest("bar", "_doc").setRefreshPolicy(RefreshPolicy.IMMEDIATE).source("{\"content\":\"bar\"}", XContentType.JSON)).actionGet();
+            tc.index(new IndexRequest("baz", "_doc").setRefreshPolicy(RefreshPolicy.IMMEDIATE).source("{\"content\":\"baz\"}", XContentType.JSON)).actionGet();
+            tc.index(new IndexRequest("tux", "_doc").setRefreshPolicy(RefreshPolicy.IMMEDIATE).source("{\"content\":\"tux\"}", XContentType.JSON)).actionGet();
             tc.admin().indices().aliases(new IndicesAliasesRequest().addAliasAction(AliasActions.add().indices("foo").alias("demo"))).actionGet();
         }
         
