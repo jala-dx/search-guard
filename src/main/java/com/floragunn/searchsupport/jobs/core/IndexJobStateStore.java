@@ -1029,6 +1029,9 @@ public class IndexJobStateStore<JobType extends com.floragunn.searchsupport.jobs
 
         addToCollections(internalOperableTrigger);
 
+        internalOperableTrigger.computeFirstFireTime(null);
+        internalOperableTrigger.node = this.nodeId;
+
         updateTriggerStateToIdle(internalOperableTrigger);
 
         if (internalOperableTrigger.getState() == InternalOperableTrigger.State.WAITING) {

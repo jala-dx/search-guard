@@ -7,9 +7,6 @@ import java.time.Duration;
 import java.time.LocalDate;
 import java.time.LocalTime;
 import java.time.temporal.ChronoUnit;
-import java.time.temporal.TemporalUnit;
-import java.util.Calendar;
-import java.util.GregorianCalendar;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -250,6 +247,50 @@ public class JobExecutionEngineTest extends SingleClusterTest {
             int count = TestJob.getCounter("late");
 
             assertTrue("count is " + count, count >= 1);
+
+        }
+    }
+
+    @Test
+    public void triggerUpdateTest() throws Exception {
+        final Settings settings = Settings.builder().build();
+
+        setup(settings);
+
+        try (Client tc = getInternalTransportClient()) {
+
+            String jobConfig = createCronJobConfig(1, "basic", null, "*/1 * * * * ?");
+
+            tc.index(new IndexRequest("testjobconfig").id("trigger_update_test_job").setRefreshPolicy(RefreshPolicy.IMMEDIATE).source(jobConfig, XContentType.JSON)).actionGet();
+
+            for (PluginAwareNode node : this.clusterHelper.allNodes()) {
+                if ("1".equals(node.settings().get("node.attr.node_index"))) {
+
+                    ClusterService clusterService = node.injector().getInstance(ClusterService.class);
+
+                    Scheduler scheduler = new SchedulerBuilder<DefaultJobConfig>().client(tc).name("test").configIndex("testjobconfig")
+                            .nodeFilter("node_index:1").jobConfigFactory(new ConstantHashJobConfig.Factory(TestJob.class)).distributed(clusterService)
+                            .nodeComparator(new NodeNameComparator(clusterService)).build();
+
+                    scheduler.start();
+                }
+            }
+
+            Thread.sleep(3 * 1000);
+
+            int count1 = TestJob.getCounter("basic");
+
+            jobConfig = createCronJobConfig(1, "basic", null, "* * * * * ?");
+            tc.index(new IndexRequest("testjobconfig").id("trigger_update_test_job").setRefreshPolicy(RefreshPolicy.IMMEDIATE).source(jobConfig, XContentType.JSON)).actionGet();
+            SchedulerConfigUpdateAction.send(tc, "test");
+
+            Thread.sleep(3 * 1000);
+
+            int count2 = TestJob.getCounter("basic");
+
+            System.out.println("count1: " + count1 + "; count2: " + count2);
+
+            assertTrue("count is " + count2, count2 > count1);
 
         }
     }
