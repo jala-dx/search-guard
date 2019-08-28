@@ -57,7 +57,7 @@ public class ValidatingJsonNode {
             }
 
         } else {
-            return Collections.emptyList();
+            return null;
         }
     }
 
