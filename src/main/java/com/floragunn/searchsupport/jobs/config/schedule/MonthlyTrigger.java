@@ -17,6 +17,7 @@ import org.quartz.impl.triggers.CronTriggerImpl;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.floragunn.searchsupport.jobs.config.validation.ConfigValidationException;
 import com.floragunn.searchsupport.jobs.config.validation.InvalidAttributeValue;
+import com.floragunn.searchsupport.jobs.config.validation.MissingAttribute;
 import com.floragunn.searchsupport.jobs.config.validation.ValidationErrors;
 
 public class MonthlyTrigger extends HumanReadableCronTrigger<MonthlyTrigger> {
@@ -127,7 +128,7 @@ public class MonthlyTrigger extends HumanReadableCronTrigger<MonthlyTrigger> {
             } else if (atNode != null && atNode.isTextual()) {
                 at = Collections.singletonList(parseTimeOfDay(atNode.textValue()));
             } else {
-                at = Collections.emptyList();
+                validationErrors.add(new MissingAttribute("at", jsonNode));
             }
         } catch (ConfigValidationException e) {
             validationErrors.add("at", e);
