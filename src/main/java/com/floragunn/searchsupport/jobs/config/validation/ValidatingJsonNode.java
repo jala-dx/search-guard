@@ -9,6 +9,8 @@ import java.util.List;
 import java.util.TimeZone;
 import java.util.function.Function;
 
+import org.apache.commons.validator.routines.EmailValidator;
+
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.floragunn.searchsupport.util.DurationFormat;
@@ -31,11 +33,117 @@ public class ValidatingJsonNode {
         }
     }
 
+    public int requiredInt(String attribute) {
+        if (jsonNode.hasNonNull(attribute)) {
+            JsonNode attributeNode = jsonNode.get(attribute);
+
+            if (attributeNode.isNumber()) {
+                return attributeNode.asInt();
+            } else {
+                validationErrors.add(new InvalidAttributeValue(attribute, attributeNode.toString(), "number", attributeNode));
+                return 0;
+            }
+        } else {
+            validationErrors.add(new MissingAttribute(attribute, jsonNode));
+            return 0;
+        }
+    }
+
     public String string(String attribute) {
         if (jsonNode.hasNonNull(attribute)) {
             return jsonNode.get(attribute).asText();
         } else {
             return null;
+        }
+    }
+
+    public String emailAddress(String attribute) {
+        if (jsonNode.hasNonNull(attribute)) {
+            String value = jsonNode.get(attribute).asText();
+
+            if (EmailValidator.getInstance(true, true).isValid(value)) {
+                return value;
+            } else {
+                validationErrors.add(new InvalidAttributeValue(attribute, value, "E-mail address", jsonNode));
+                return null;
+            }
+        } else {
+            return null;
+        }
+    }
+
+    public List<String> emailAddressList(String attribute) {
+        if (jsonNode.hasNonNull(attribute)) {
+            JsonNode subNode = jsonNode.get(attribute);
+            List<String> result;
+
+            if (subNode.isArray()) {
+                ArrayNode arrayNode = (ArrayNode) subNode;
+                result = new ArrayList<>(arrayNode.size());
+
+                for (JsonNode child : arrayNode) {
+                    result.add(child.asText());
+                }
+
+            } else {
+                result = Collections.singletonList(subNode.textValue());
+            }
+
+            int errorCount = 0;
+
+            for (String address : result) {
+                if (!EmailValidator.getInstance(true, true).isValid(address)) {
+                    validationErrors.add(new InvalidAttributeValue(attribute, address, "E-mail address", jsonNode));
+                    errorCount++;
+                }
+            }
+
+            if (errorCount == 0) {
+                return result;
+            } else {
+                return null;
+            }
+
+        } else {
+            return null;
+        }
+    }
+
+    public String[] emailAddressArray(String attribute) {
+        List<String> result = emailAddressList(attribute);
+
+        if (result != null) {
+            return result.toArray(new String[result.size()]);
+        } else {
+            return null;
+        }
+    }
+
+    public Integer intNumber(String attribute, Integer defaultValue) {
+        if (jsonNode.hasNonNull(attribute)) {
+            JsonNode attributeNode = jsonNode.get(attribute);
+
+            if (attributeNode.isNumber()) {
+                return attributeNode.asInt();
+            } else {
+                return defaultValue;
+            }
+        } else {
+            return defaultValue;
+        }
+    }
+
+    public Boolean booleanAttribute(String attribute, Boolean defaultValue) {
+        if (jsonNode.hasNonNull(attribute)) {
+            JsonNode attributeNode = jsonNode.get(attribute);
+
+            if (attributeNode.isBoolean()) {
+                return attributeNode.asBoolean();
+            } else {
+                return defaultValue;
+            }
+        } else {
+            return defaultValue;
         }
     }
 
@@ -56,6 +164,16 @@ public class ValidatingJsonNode {
                 return Collections.singletonList(subNode.textValue());
             }
 
+        } else {
+            return null;
+        }
+    }
+
+    public String[] stringArray(String attribute) {
+        List<String> list = stringList(attribute);
+
+        if (list != null) {
+            return list.toArray(new String[list.size()]);
         } else {
             return null;
         }
