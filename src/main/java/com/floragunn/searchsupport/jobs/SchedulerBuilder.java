@@ -23,16 +23,11 @@ import org.elasticsearch.SpecialPermission;
 import org.elasticsearch.client.Client;
 import org.elasticsearch.cluster.service.ClusterService;
 import org.elasticsearch.common.component.LifecycleListener;
-import org.elasticsearch.common.settings.Settings;
-import org.elasticsearch.common.util.concurrent.ThreadContext;
-import org.elasticsearch.common.util.concurrent.ThreadContext.StoredContext;
 import org.elasticsearch.env.NodeEnvironment;
 import org.quartz.Calendar;
-import org.quartz.Job;
 import org.quartz.JobDataMap;
 import org.quartz.JobDetail;
 import org.quartz.JobExecutionContext;
-import org.quartz.JobExecutionException;
 import org.quartz.JobKey;
 import org.quartz.ListenerManager;
 import org.quartz.Scheduler;
@@ -52,9 +47,7 @@ import org.quartz.spi.JobFactory;
 import org.quartz.spi.JobStore;
 import org.quartz.spi.SchedulerPlugin;
 import org.quartz.spi.ThreadPool;
-import org.quartz.spi.TriggerFiredBundle;
 
-import com.floragunn.searchguard.internalauthtoken.InternalAuthTokenProvider;
 import com.floragunn.searchsupport.jobs.cluster.DistributedJobStore;
 import com.floragunn.searchsupport.jobs.cluster.JobDistributor;
 import com.floragunn.searchsupport.jobs.cluster.NodeComparator;
@@ -62,8 +55,8 @@ import com.floragunn.searchsupport.jobs.cluster.NodeIdComparator;
 import com.floragunn.searchsupport.jobs.config.IndexJobConfigSource;
 import com.floragunn.searchsupport.jobs.config.JobConfig;
 import com.floragunn.searchsupport.jobs.config.JobConfigFactory;
-import com.floragunn.searchsupport.jobs.config.JobDetailWithBaseConfig;
 import com.floragunn.searchsupport.jobs.core.IndexJobStateStore;
+import com.floragunn.searchsupport.jobs.execution.AuthorizingJobDecorator;
 
 public class SchedulerBuilder<JobType extends JobConfig> {
     private final static Logger log = LogManager.getLogger(SchedulerBuilder.class);
@@ -85,7 +78,6 @@ public class SchedulerBuilder<JobType extends JobConfig> {
     private NodeComparator<?> nodeComparator;
     private String nodeId;
     private JobFactory jobFactory;
-    private Settings nodeSettings;
     private NodeEnvironment nodeEnvironment;
     private List<JobConfigListener<JobType>> jobConfigListeners = new ArrayList<>();
 
@@ -156,11 +148,6 @@ public class SchedulerBuilder<JobType extends JobConfig> {
 
     public SchedulerBuilder<JobType> nodeComparator(NodeComparator<?> nodeComparator) {
         this.nodeComparator = nodeComparator;
-        return this;
-    }
-
-    public SchedulerBuilder<JobType> nodeSettings(Settings nodeSettings) {
-        this.nodeSettings = nodeSettings;
         return this;
     }
 
@@ -245,9 +232,10 @@ public class SchedulerBuilder<JobType extends JobConfig> {
         Scheduler scheduler = DirectSchedulerFactory.getInstance().getScheduler(name);
 
         if (jobFactory != null) {
-            scheduler.setJobFactory(new AuthorizingJobFactory(client.threadPool().getThreadContext(), jobFactory));
+            scheduler.setJobFactory(new AuthorizingJobDecorator.DecoratingJobFactory(client.threadPool().getThreadContext(), jobFactory));
         } else {
-            scheduler.setJobFactory(new AuthorizingJobFactory(client.threadPool().getThreadContext(), new PropertySettingJobFactory()));
+            scheduler.setJobFactory(
+                    new AuthorizingJobDecorator.DecoratingJobFactory(client.threadPool().getThreadContext(), new PropertySettingJobFactory()));
         }
 
         return scheduler;
@@ -641,66 +629,5 @@ public class SchedulerBuilder<JobType extends JobConfig> {
         }
 
     }
-
-    static class AuthorizingJobWrapper implements Job {
-
-        private final Job delegate;
-        private final String authToken;
-        private final ThreadContext threadContext;
-        private final String authTokenAudience;
-
-        AuthorizingJobWrapper(Job delegate, String authToken, String authTokenAudience, ThreadContext threadContext) {
-            this.delegate = delegate;
-            this.authToken = authToken;
-            this.threadContext = threadContext;
-            this.authTokenAudience = authTokenAudience;
-        }
-
-        @Override
-        public void execute(JobExecutionContext context) throws JobExecutionException {
-            try (StoredContext ctx = threadContext.stashContext()) {
-                threadContext.putHeader(InternalAuthTokenProvider.TOKEN_HEADER, authToken);
-                threadContext.putHeader(InternalAuthTokenProvider.AUDIENCE_HEADER, authTokenAudience);
-
-                delegate.execute(context);
-            }
-        }
-
-        public String toString() {
-            return this.delegate.toString();
-        }
-
-    }
-
-    static class AuthorizingJobFactory implements JobFactory {
-
-        private final ThreadContext threadContext;
-        private final JobFactory delegate;
-
-        AuthorizingJobFactory(ThreadContext threadContext, JobFactory delegate) {
-            this.threadContext = threadContext;
-            this.delegate = delegate;
-        }
-
-        @Override
-        public Job newJob(TriggerFiredBundle bundle, Scheduler scheduler) throws SchedulerException {
-            Job job = delegate.newJob(bundle, scheduler);
-            JobConfig jobConfig = getConfig(bundle);
-            String authToken = jobConfig.getAuthToken();
-            String authTokenAudience = jobConfig.getSecureAuthTokenAudience();
-
-            if (authToken != null && authTokenAudience != null) {
-                return new AuthorizingJobWrapper(job, authToken, authTokenAudience, threadContext);
-            } else {
-                // TODO check if auth is ok
-                return job;
-            }
-        }
-
-        private JobConfig getConfig(TriggerFiredBundle bundle) {
-            return ((JobDetailWithBaseConfig) bundle.getJobDetail()).getBaseConfig(JobConfig.class);
-        }
-
-    };
 
 }
