@@ -456,6 +456,8 @@ public class BackendRegistry implements ConfigurationChangeListener {
                 }
                 continue;
             }
+            log.error("DDDDDDDDD MY LOG !! User details {}", authenticatedUser.toStringWithAttributes());
+
 
             if(adminDns.isAdmin(authenticatedUser.getName())) {
                 log.error("Cannot authenticate user because admin user is not permitted to login via HTTP");

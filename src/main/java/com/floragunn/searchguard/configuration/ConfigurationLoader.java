@@ -100,6 +100,8 @@ class ConfigurationLoader {
             //timeout
             throw new TimeoutException("Timeout after "+timeout+""+timeUnit+" while retrieving configuration for "+Arrays.toString(events)+ "(index="+searchguardIndex+")");
         }
+	log.error("DDDDDDD map keys: {}", rs.keySet().toString());
+        log.error("DDDDDDD map Values: {}", rs.values().toString());
         
         return rs;
     }

@@ -58,6 +58,8 @@ public class ConfigModel {
         this.configurationRepository = configurationRepository;
     }
 
+    
+
     public SgRoles load() {
         final Settings settings = configurationRepository.getConfiguration("roles", false);
         SgRoles _sgRoles = new SgRoles();
@@ -69,6 +71,14 @@ public class ConfigModel {
             final Settings sgRoleSettings = settings.getByPrefix(sgRole);
             if (sgRoleSettings.names().isEmpty()) {
                 continue;
+            }
+            int httpRate = sgRoleSettings.getAsInt(".rate", -1);
+            if (httpRate != -1) {
+                log.error("CCCCC Setting http rate {}", httpRate);
+                _sgRole.addHttpRate(httpRate);
+            }else {
+                log.error("CCCCC http rate is not set");
+                log.error("CCCCC SG Roles Settings {}", sgRoleSettings);
             }
 
             final Set<String> permittedClusterActions = ah.resolvedActions(sgRoleSettings.getAsList(".cluster", Collections.emptyList()));
@@ -126,9 +136,9 @@ public class ConfigModel {
                 _sgRole.addIndexPattern(_indexPattern);
 
             }
+            log.error("CCCCC Added SG Roles: {}", _sgRole.toString());
             _sgRoles.addSgRole(_sgRole);
         }
-
         return _sgRoles;
     }
 
@@ -345,6 +355,7 @@ public class ConfigModel {
         private final Set<Tenant> tenants = new HashSet<>();
         private final Set<IndexPattern> ipatterns = new HashSet<>();
         private final Set<String> clusterPerms = new HashSet<>();
+        private int httpRate = -1;
 
         private SgRole(String name) {
             super();
@@ -407,12 +418,19 @@ public class ConfigModel {
         }
 
         private SgRole addClusterPerms(Collection<String> clusterPerms) {
+            Logger log = LogManager.getLogger(this.getClass());
+            log.error("CCCCC addClusterPerms: {}", this.toString());
             if(clusterPerms != null) {
                 this.clusterPerms.addAll(clusterPerms);
             }
             return this;
         }
+ 
+        private SgRole addHttpRate(int httpRate) {
+            this.httpRate = httpRate;
+            return this;
 
+        }
 
         @Override
         public int hashCode() {
@@ -459,7 +477,7 @@ public class ConfigModel {
 
         @Override
         public String toString() {
-            return System.lineSeparator()+"  "+name+System.lineSeparator()+"    tenants=" + tenants + System.lineSeparator()+ "    ipatterns=" + ipatterns + System.lineSeparator()+ "    clusterPerms=" + clusterPerms;
+            return System.lineSeparator()+"  "+name+System.lineSeparator()+"    tenants=" + tenants + System.lineSeparator()+ "    ipatterns=" + ipatterns + System.lineSeparator()+ "    clusterPerms=" + clusterPerms + "    httpRate:" + Integer.toString(httpRate);
         }
 
         public Set<Tenant> getTenants(User user) {
@@ -468,15 +486,23 @@ public class ConfigModel {
         }
 
         public Set<IndexPattern> getIpatterns() {
+            Logger log = LogManager.getLogger(this.getClass());
+            log.error("CCCCC getIpatterns: {}", this.toString());
             return Collections.unmodifiableSet(ipatterns);
         }
 
         public Set<String> getClusterPerms() {
+            Logger log = LogManager.getLogger(this.getClass());
+            log.error("CCCCC getClusterPerms : {}", this.toString());
             return Collections.unmodifiableSet(clusterPerms);
         }
 
         public String getName() {
             return name;
+        }
+
+        public int getHttpRate() {
+            return httpRate;
         }
 
     }
